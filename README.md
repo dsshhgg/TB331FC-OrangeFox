@@ -1,32 +1,35 @@
-# TB331FC OrangeFox
+# TB331FC Hub
 
-Research & port notes for **OrangeFox Recovery** on Lenovo Xiaoxin Pad 2024 (**TB331FC**, SM6225/khaje).
+联想 **小新 Pad 2024（TB331FC）** 开源资料中心：OrangeFox 移植研究、设备树、脚本、资源索引。
 
-**Do not use TWRP** for this device workflow (project rule). Prefer OrangeFox; Root via APatch/KernelSU on boot if recovery is blocked.
+> **GitHub = 目录；网盘 = 仓库。**  
+> 大文件（ZUI 全量包、GSI、super）请看 [资源索引.md](资源索引.md)，不要塞进 Git。
 
-## TL;DR
+## 禁止
 
-- OrangeFox **build/CI/device tree** work.
-- **ABL recovery whitelist** blocks third-party recovery on ZUI 16 even with valid AOSP testkey-signed vbmeta.
-- Changing **1 byte** in recovery used-content is rejected; **padding is not checked**.
-- `abl`/`xbl` are **critical partitions** (fastboot cannot flash; use 9008).
-- Full notes: [`docs/01-complete-handbook.zh.md`](docs/01-complete-handbook.zh.md) → use `01-complete-handbook.zh.md`.
+- **不要使用 TWRP**（本项目规则）。优先 OrangeFox；Root 可用 APatch / KernelSU。  
+- 不要把 100MB+ 固件直接 push 到 GitHub。
 
-## Docs (Chinese)
+## 目录
 
-| Doc | Content |
-|---|---|
-| [complete handbook](docs/01-complete-handbook.zh.md) | Everything in one file |
-| [whitelist report](docs/02-recovery-whitelist-report.zh.md) | ABL whitelist evidence |
-| [port summary](docs/03-port-summary.zh.md) | What we built |
-| [pitfalls](docs/04-pitfalls-device-issues.zh.md) | Traps & device issues |
-| [AI handoff](docs/05-ai-handoff-prompt.zh.md) | Paste-to-another-AI prompt |
+```
+TB331FC-Hub（本仓库）
+├── README.md
+├── 资源索引.md              ← 大文件网盘入口
+├── docs/                    ← 完整手册与报告
+├── device/lenovo/TB331FC/   ← 设备树（文本）
+├── scripts/                 ← 备份 / 校验脚本
+├── tools/README.md          ← 工具获取说明
+└── .github/workflows/       ← OrangeFox CI
+```
 
-## Device tree
+## 快速开始
 
-`device/lenovo/TB331FC/` — makefiles, fstab, fox.cfg, vendorsetup (text only; **no OEM kernel/modules**).
+1. 读 [docs/01-complete-handbook.zh.md](docs/01-complete-handbook.zh.md)  
+2. 大文件从 [资源索引.md](资源索引.md) 获取  
+3. 需要 AI 接手：复制 [docs/05-ai-handoff-prompt.zh.md](docs/05-ai-handoff-prompt.zh.md)
 
-## Build (OrangeFox 12.1 tree)
+## 构建 OrangeFox（摘要）
 
 ```bash
 source build/envsetup.sh
@@ -34,17 +37,16 @@ export FOX_USE_TWRP_RECOVERY_IMAGE_BUILDER=1
 export ALLOW_MISSING_DEPENDENCIES=true
 lunch fox_TB331FC-eng
 mka adbd recoveryimage
-# clear cmdline before flash (builder may inject buildvariant=eng)
 ```
 
-## Not in this repo
+## 结论（研究摘要）
 
-- Lenovo / Qualcomm firmware, stock kernel, vendor modules (proprietary)
-- Prebuilt recovery images containing OEM blobs
-
-Get official packages yourself (ZUI service packages) and keep them offline.
+- OrangeFox **可编译**。  
+- ZUI 16 **ABL recovery 白名单**拦截第三方 rec（含 testkey 合法 vbmeta）。  
+- 有效内容 1-bit 改动即拒；padding 不校验。  
+- abl/xbl 仅 **9008** 可写。  
+- 细节见 docs。
 
 ## License
 
-Documentation: MIT. Device tree scripts: MIT.  
-OEM components remain property of their owners.
+MIT（文档与脚本）。OEM 固件版权归联想/高通等所有，本仓库不托管。
