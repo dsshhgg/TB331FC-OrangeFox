@@ -4,6 +4,7 @@
 
 > **GitHub = 目录；网盘 = 仓库。**  
 > 大文件（ZUI 全量包、GSI、super）请看 [资源索引.md](资源索引.md)，不要塞进 Git。
+> 123 网盘：https://1824924518.share.123pan.cn/123pan/Y4m2jv-Ox0lv
 
 ## 禁止
 
