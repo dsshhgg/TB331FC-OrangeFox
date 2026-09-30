@@ -1,0 +1,190 @@
+name: Build OrangeFox for TB331FC
+
+on:
+  push:
+    branches: [fox-12.1]
+  workflow_dispatch:
+
+env:
+  DEVICE_NAME: TB331FC
+  OF_BRANCH: 12.1
+  FOX_DIR: /home/runner/fox_12.1
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 350
+
+    steps:
+      - name: Checkout device tree
+        uses: actions/checkout@v4
+        with:
+          path: devicetree
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            bc bison build-essential ccache curl flex g++-multilib gcc-multilib \
+            git gnupg gperf imagemagick lib32ncurses5-dev lib32readline-dev \
+            lib32z1-dev libc6-dev-i386 libelf-dev libgl1-mesa-dev libxml2-utils \
+            libssl-dev libx11-dev libncurses5 libncurses5-dev libsdl1.2-dev \
+            libwxgtk3.0-gtk3-dev lzop pngcrush python3 rsync schedtool \
+            squashfs-tools xsltproc zip zlib1g-dev unzip openjdk-11-jdk
+
+      # ---------------------------------------------------------------
+      # GitHub-hosted runner 只有约 14-20GB 可用磁盘、单 job 6 小时上限。
+      # OrangeFox 全量树 + 编译产物远超这个量，所以这里用 actions/cache
+      # 跨 job 复用源码树与 ccache，避免每次都全量同步 + 全量编译。
+      # 首次运行仍会较慢，之后命中缓存即可增量构建。
+      # ---------------------------------------------------------------
+      - name: Restore cached OrangeFox source tree
+        id: cache-source
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.FOX_DIR }}
+          key: fox-src-${{ env.OF_BRANCH }}-v1
+
+      - name: Restore ccache
+        uses: actions/cache@v4
+        with:
+          path: /home/runner/ccache-writable
+          key: fox-ccache-${{ env.DEVICE_NAME }}-${{ github.sha }}
+          restore-keys: |
+            fox-ccache-${{ env.DEVICE_NAME }}-
+
+      - name: Sync OrangeFox source
+        if: steps.cache-source.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p ~/bin
+          curl https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
+          chmod a+x ~/bin/repo
+          export PATH=~/bin:$PATH
+          git config --global --unset http.proxy 2>/dev/null || true
+          git config --global --unset https.proxy 2>/dev/null || true
+          git clone --depth=1 https://gitlab.com/OrangeFox/sync.git ~/of_sync
+          cd ~/of_sync
+          chmod +x orangefox_sync.sh
+          ./orangefox_sync.sh --branch ${{ env.OF_BRANCH }} --path ${{ env.FOX_DIR }}
+
+      - name: Fetch stock kernel (release asset)
+        run: |
+          # 46MB raw kernel is too large for the Contents API; ship as release asset
+          mkdir -p devicetree/device/lenovo/${{ env.DEVICE_NAME }}/prebuilt
+          curl -L --retry 3 -o /tmp/stock-kernel.gz \
+            https://github.com/${{ github.repository }}/releases/download/fox-TB331FC-15/stock-kernel.gz
+          gzip -dc /tmp/stock-kernel.gz > devicetree/device/lenovo/${{ env.DEVICE_NAME }}/prebuilt/kernel
+          ls -la devicetree/device/lenovo/${{ env.DEVICE_NAME }}/prebuilt/kernel
+          rm -f /tmp/stock-kernel.gz
+      - name: Install device tree into source tree
+        run: |
+          # 注意目录层级：仓库根目录是外层，设备树在 device/lenovo/TB331FC/
+          # 直接 git clone 到 device/lenovo/ 会得到 device/lenovo/TB331FC/device/lenovo/TB331FC/
+          mkdir -p ${{ env.FOX_DIR }}/device/lenovo
+          rm -rf ${{ env.FOX_DIR }}/device/lenovo/${{ env.DEVICE_NAME }}
+          cp -r devicetree/device/lenovo/${{ env.DEVICE_NAME }} \
+                ${{ env.FOX_DIR }}/device/lenovo/${{ env.DEVICE_NAME }}
+          # ${{ env.FOX_DIR }}/device/lenovo/${{ env.DEVICE_NAME }}/vendorsetup.sh
+          chmod +x ${{ env.FOX_DIR }}/device/lenovo/${{ env.DEVICE_NAME }}/vendorsetup.sh
+
+      - name: Build OrangeFox
+        shell: bash
+        run: |
+          set +e
+          cd ${{ env.FOX_DIR }}
+          # ccache on this runner hits "Read-only file system" under $HOME
+          # even with a fresh dir; disable it and compile without cache.
+          unset USE_CCACHE CCACHE_DIR CCACHE_EXEC
+          export ALLOW_MISSING_DEPENDENCIES=true
+          export FOX_USE_TWRP_RECOVERY_IMAGE_BUILDER=1
+          export LC_ALL=C
+          df -h /home /tmp | tee /tmp/df.txt
+          {
+            echo "==== source envsetup ===="
+            source build/envsetup.sh
+            echo "==== envsetup rc=$? ===="
+            echo "==== try lunch fox_TB331FC-eng ===="
+            lunch fox_${{ env.DEVICE_NAME }}-eng
+            echo "==== lunch fox rc=$? ===="
+            if ! get_build_var TARGET_PRODUCT >/tmp/target_product.txt 2>/dev/null; then
+              echo "TARGET_PRODUCT empty, fallback to twrp lunch"
+              lunch twrp_${{ env.DEVICE_NAME }}-eng
+              echo "==== lunch twrp rc=$? ===="
+            fi
+            echo "TARGET_PRODUCT=$(cat /tmp/target_product.txt 2>/dev/null)"
+            echo "==== mka ===="
+            mka adbd recoveryimage -j$(nproc)
+            MKA_RC=$?
+            echo "==== mka rc=$MKA_RC ===="
+            exit $MKA_RC
+          } 2>&1 | tee /tmp/build.log
+          exit ${PIPESTATUS[0]}
+
+      - name: Strip recovery cmdline (Lenovo rejects non-empty cmdline)
+        run: |
+          # OF builder injects --cmdline "buildvariant=eng"; Lenovo bootloader
+          # falls back to fastboot on any non-empty cmdline. Zero it in-place.
+          python3 - <<'PY'
+          import os, struct
+          p = os.environ.get("FOX_DIR", "/home/runner/fox_12.1") + "/out/target/product/TB331FC"
+          names = [f for f in os.listdir(p) if f.startswith("OrangeFox-") and f.endswith(".img")]
+          names += ["recovery.img"]
+          for n in names:
+              fp = os.path.join(p, n)
+              if not os.path.isfile(fp):
+                  continue
+              with open(fp, "r+b") as f:
+                  hdr = bytearray(f.read(4096))
+                  if hdr[:8] != b"ANDROID!":
+                      continue
+                  k, r, osv, hs = struct.unpack_from("<4I", hdr, 8)
+                  cmd = bytes(hdr[44:44+1536]).split(b"\x00",1)[0]
+                  print(f"{n}: kernel={k} ramdisk={r} cmdline={cmd!r}")
+                  hdr[44:44+1536] = b"\x00" * 1536
+                  f.seek(0); f.write(hdr)
+                  print(f"  -> cmdline cleared")
+          PY
+          ls -la ${{ env.FOX_DIR }}/out/target/product/${{ env.DEVICE_NAME }}/OrangeFox-*.img
+      - name: Generate AVB-disabled vbmeta
+        run: |
+          cd ${{ env.FOX_DIR }}
+          # flags 3 = 关闭 AVB 校验；padding_size 65536 对齐 stock 分区大小，
+          # 否则 fastboot 会因「小镜像刷大分区」拒绝写入。
+          python3 external/avb/avbtool make_vbmeta_image \
+            --flags 3 \
+            --algorithm SHA256_RSA4096 \
+            --key external/avb/test/data/testkey_rsa4096.pem \
+            --padding_size 65536 \
+            --output out/target/product/${{ env.DEVICE_NAME }}/vbmeta.img
+
+      - name: Locate recovery image
+        run: |
+          cd ${{ env.FOX_DIR }}/out/target/product/${{ env.DEVICE_NAME }}
+          FOUND=$(ls -1 recovery.img OrangeFox-*.img 2>/dev/null | head -n1 || true)
+          if [ -z "$FOUND" ]; then
+            echo "!! 未找到 recovery 产物，列出 out 目录排查："
+            ls -la .
+            exit 1
+          fi
+          echo "FOUND=$FOUND" >> $GITHUB_ENV
+          echo "产物: $FOUND"
+
+      - name: Upload build log on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fox-build-log
+          path: |
+            /tmp/build.log
+            /tmp/lunch.log
+            /tmp/target_product.txt
+          if-no-files-found: warn
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: fox-${{ env.DEVICE_NAME }}-${{ github.run_number }}
+          name: OrangeFox for ${{ env.DEVICE_NAME }}
+          files: |
+            ${{ env.FOX_DIR }}/out/target/product/${{ env.DEVICE_NAME }}/${{ env.FOUND }}
+            ${{ env.FOX_DIR }}/out/target/product/${{ env.DEVICE_NAME }}/vbmeta.img
