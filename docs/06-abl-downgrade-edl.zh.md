@@ -214,6 +214,31 @@ ph2 type=1 off=0x3000  filesz=262144 memsz=262144 vaddr=0x9fa00000
 `uefi_sec.mbn`、`storsec.mbn` 里搜字节 → **零命中**。说明白名单实现里没有明文/裸哈希常量，
 更可能是代码内逻辑或另一套签名校验（这部分只能真机实测，无法离线定论）。
 
+### 7.1 ZUI15 原厂分区坐标（从原厂 `rawprogram*.xml` 解析，已核对）
+
+万一 abl 写完需要救机，这就是「哪块在哪个 LUN 哪个扇区」的权威清单：
+
+| 分区 | LUN | 起始扇区 | 扇区数 | 文件 | 本地是否具备 |
+|---|---|---|---|---|---|
+| `xbl_a` | 1 | 6 | 896 | `xbl.img` | ✅ 3670016 B |
+| `xbl_config_a` | 1 | 902 | 32 | `xbl_config.img` | ✅ 131072 B |
+| `xbl_b` | 2 | 6 | 896 | `xbl.img` | ✅ |
+| `abl_a` | 4 | 56838 (0xde06000) | 256 | `abl.img` | ✅ 1048576 B |
+| `abl_b` | 4 | 206574 (0x326ee000) | 256 | `abl.img` | ✅ |
+| `boot_a` / `boot_b` | 4 | 65414 / 215150 | 24576 | `boot.img` | ✅ 100663296 B |
+| `init_boot_a` | 4 | 97518 | 2048 | `init_boot.img` | ✅ 8388608 B |
+| `vbmeta_a` / `vbmeta_b` | 4 | 90294 / (b 槽) | 16 | `vbmeta.img` | ✅ 65536 B |
+| `vbmeta_system_a` | 0 | 3235720 | 16 | `vbmeta_system.img` | ✅ 65536 B |
+| `dtbo_a` | 4 | 90310 | 6144 | `dtbo.img` | ✅ 25165824 B |
+| `recovery_a` | 4 | 99566 | 25600 | `recovery.img` | ✅ 104857600 B |
+| `recovery_b` | 4 | 247254 | 25600 | （原厂该槽为空，未刷） | — |
+| `vendor_boot_a` | 4 | 125166 | 24576 | `vendor_boot.img` | ✅ 100663296 B |
+
+**逐条目核验结果**：ZUI15 解包目录里 **17 个条目尺寸与声明完全一致、0 个超出、0 个不足**；
+44 个「不足」全部是**本目录未解包的其它固件**（`xbl.img` 之外还有 `rpm/tz/hyp/modem/dsp/keymaster/
+devcfg/qupfw/bluetooth/super/metadata/gpt_*` 等），需要时从 ZUI15 原包再取。
+`xbl.img` / `xbl_config.img` 尺寸校验通过（`896×4096=3670016`、`32×4096=131072`）。
+
 **离线分发测试**（`tests\test_dispatch.ps1`，不需要真机）——9 条用例全通过：
 
 ```
