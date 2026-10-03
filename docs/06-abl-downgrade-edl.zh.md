@@ -37,6 +37,7 @@ tool\fh_loader.exe --port=\\.\%ProtNumber% --search_path=%~dp0image --sendxml=ra
 TB331FC-abl-downgrade\
 ├─ README.md                  本说明
 ├─ verify_staging.ps1         离线自检（只读，已跑通：ALL CHECKS PASSED）
+├─ one_click_of.ps1           一键编排（默认只报告；加开关才动手）
 ├─ detect_9008.ps1            检测 9008 端口（只读）
 ├─ check_abl_version.ps1      读回 abl 判断当前是 ZUI15 还是 ZUI16（只读，写之前先跑）
 ├─ run_downgrade.ps1          写 ZUI15 abl 到 abl_a/abl_b（UFS 模式，写完自动读回校验）
@@ -95,7 +96,43 @@ powershell -ExecutionPolicy Bypass -File .\run_rollback.ps1
 
 ---
 
-## 四、风险（先说清楚）
+## 四、一键脚本 `one_click_of.ps1`
+
+**默认什么都不改**，只识别设备状态（系统 / fastboot / 9008 / 未授权 / 无设备）并给出建议，同时把全过程写进 `logs\one_click_*.txt`。
+
+```powershell
+# 只报告（安全）
+powershell -ExecutionPolicy Bypass -File .\one_click_of.ps1
+
+# 设备在 9008 时：写 ZUI15 abl（含读回校验）
+powershell -ExecutionPolicy Bypass -File .\one_click_of.ps1 -AblDowngrade
+
+# 设备在 fastboot 时：刷 OrangeFox
+powershell -ExecutionPolicy Bypass -File .\one_click_of.ps1 -FlashOf
+# 仍进不去才加原厂 vbmeta（默认不带）
+powershell -ExecutionPolicy Bypass -File .\one_click_of.ps1 -FlashOf -DoVbmeta
+# 刷完顺手测进入
+powershell -ExecutionPolicy Bypass -File .\one_click_of.ps1 -FlashOf -TestBoot
+```
+
+**vbmeta 血统（本轮用 avbtool 复核）**
+
+```
+avbtool info_image --image avb\vbmeta_stock_backup.img
+  Public key (sha1): 2597c218aae470a130f61162feaae70afd97f011   ← = AOSP testkey = 原厂公钥
+  Algorithm: SHA256_RSA4096    Flags: 0
+  Chain Partition descriptor -> vbmeta_system (rollback index 2)
+  release string: avbtool 1.2.0
+  Prop ... fingerprint -> Lenovo/TB331FC_PRC/TB331FC:14/.../ZUI_16.0.544_241115_PRC:user/release-keys
+```
+
+即 `avb\vbmeta_stock_backup.img` 就是**纯原厂 ZUI16 vbmeta**（8192 B），
+sha256 `52ecb456…` 与只读原厂目录里的 `原 boot\vbmeta.img` **逐字节一致**，
+所以 `-DoVbmeta` 用它而不是去动原厂目录。
+
+---
+
+## 五、风险（先说清楚）
 
 | 风险 | 说明 | 兜底 |
 |---|---|---|
@@ -107,7 +144,7 @@ powershell -ExecutionPolicy Bypass -File .\run_rollback.ps1
 
 ---
 
-## 五、关键事实（已实测/已核对）
+## 六、关键事实（已实测/已核对）
 
 | 项 | 值 |
 |---|---|
