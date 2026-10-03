@@ -157,12 +157,13 @@ sha256 `52ecb456…` 与只读原厂目录里的 `原 boot\vbmeta.img` **逐字�
 | 扇区大小 | **4096B**（原厂 `erase_UFS-128G.xml` 与 `rawprogram*.xml` 都这么声明，故不需要 `--sectorsizeinbytes`） |
 | ZUI15 abl | 1048576 B（有效载荷 0x43000 + 零填充） |
 | ZUI16 abl | 274432 B 有效，本包补零到 1MB 以便回滚 |
-| 两版差异 | 整 1MB 比 22.81%（239155 字节）；差异集中在 274KB 有效载荷内（即有效区约 87%） |
+| 两版差异 | 整 1MB 比 **239155 字节**，差异区间精确落在 `0x1108-0x3d708`（= 元数据签名段 0x108-0x621 + 代码段 ph2 0x3000-0x43000）；**不是**「同一份二进制补零」，是两份不同构建 |
 | 是否需要先 erase | 不需要。写入覆盖全部 256 扇区 = 整个 1MB，无残留 |
 | 布局一致性 | ZUI15 与 ZUI16 两包的 `rawprogram4.xml` 中 abl_a/abl_b 完全一致（56838 / 206574 / 256 / LUN4） |
 | OF 镜像 | `E:\rom\release\OrangeFox-TB331FC\OrangeFox-new.img` |
 | OF 镜像结构 | v4 头，kernel=46819840（原厂内核），cmdline 空，ramdisk = legacy LZ4 @0x2ca8000 |
 | OF ramdisk | 解压 48MB，含 `FFiles/`、`etc/fox.cfg`、`twres/`、`init.recovery.qcom.rc`、`nvt36523_spi.ko` |
+| OF 内 fstab | `/data f2fs ... encryptable=footer`；`/metadata f2fs ... formattable,wrappedkey`（FBE 的关键是 metadata 包裹密钥）；system/vendor/product 均 `logical`（动态分区） |
 | 可选 vbmeta | `E:\rom\release\OrangeFox-TB331FC\avb\vbmeta_stock_backup.img`（原厂 ZUI16，8192 B，sha256 `52ecb456…`，avbtool 公钥 sha1 `2597c218…` = AOSP testkey，flags=0，chain→vbmeta_system） |
 
 ---
@@ -203,6 +204,15 @@ ph2 type=1 off=0x3000  filesz=262144 memsz=262144 vaddr=0x9fa00000
 
 **综合判断**：换 ZUI15 abl **大概率不会被 xbl 拒绝**；即便引导失败，PBL/Sahara（9008）不依赖 abl，
 仍可用 `run_rollback.ps1` 或售后包全量刷回。这不是 100% 保证，但三个最可能的拒绝机制都已排除。
+
+**顺带否掉一个假前提**：曾怀疑「ZUI15 的 abl.img 就是 ZUI16 abl 补零到 1MB，换了等于没换」。
+实测两者 sha256 不同、差 239155 字节（差异区间 `0x1108-0x3d708`），
+且 ZUI15 侧证书签于 2023-10-31、ZUI16 侧签于 2024-04-19 → **确实是两份不同构建**，降级有实质变化。
+
+**还查了「abl 是否拿原厂 recovery 哈希做白名单」**：对原厂 recovery 算了 9 种候选摘要
+（`sha256/sha1/md5` × 前 14577664 / 4096 / 65536 字节），去 `abl.elf`、`abl.img`、`xbl.elf`、
+`uefi_sec.mbn`、`storsec.mbn` 里搜字节 → **零命中**。说明白名单实现里没有明文/裸哈希常量，
+更可能是代码内逻辑或另一套签名校验（这部分只能真机实测，无法离线定论）。
 
 **离线分发测试**（`tests\test_dispatch.ps1`，不需要真机）——9 条用例全通过：
 
