@@ -12,10 +12,8 @@
 |---|---|
 | 目标 | 启动 **OrangeFox Recovery** |
 | 编译/CI/设备树 | ✅ 已完成（fox-12.1 / build-fox.yml） |
-| 设备启动 OF | ⚠️ **部分成功**：塞进 boot 分区后**已进入 recovery 模式**，但界面黑屏 |
-| 直刷 recovery 分区 | ❌ ABL recovery 白名单拦截 |
-| boot 分区 | ✅ **不受白名单限制**（2026-10-03 实测，见第十四部分 14.5） |
-| AOSP testkey | ✅ 与原厂公钥相同；重签 vbmeta 含 boot 哈希后系统正常启动 |
+| 设备启动 OF | ❌ 未成功：直刷 recovery 分区被白名单拦；**塞进 boot 分区也已排除**（见第十五部分） |
+| AOSP testkey | ✅ 重签 vbmeta（含 boot 哈希）后系统正常启动，但不足以启动 OF |
 | 伪装原厂 | ❌ 有效内容锁定 |
 | Root 备选 | APatch / KernelSU 刷 boot |
 | 救砖 | ZUI15/ZUI16 售后包 9008 |
