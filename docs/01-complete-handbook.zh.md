@@ -12,10 +12,11 @@
 |---|---|
 | 目标 | 启动 **OrangeFox Recovery** |
 | 编译/CI/设备树 | ✅ 已完成（fox-12.1 / build-fox.yml） |
-| 设备启动 OF | ❌ 未成功：直刷 recovery 分区被白名单拦；**塞进 boot 分区也已排除**（见第十五部分） |
-| AOSP testkey | ✅ 重签 vbmeta（含 boot 哈希）后系统正常启动，但不足以启动 OF |
-| 伪装原厂 | ❌ 有效内容锁定 |
-| Root 备选 | APatch / KernelSU 刷 boot |
+| 设备启动 OF | ❌ **不可行**：ABL 有一道独立的「联想原厂 recovery 签名」白名单（见第十六部分决定性实验） |
+| 白名单认什么 | ✅ 已实测：认**联想原厂签名**，与 ZUI 版本无关（ZUI15 原厂 recovery 能进，我们的 OF 不能） |
+| AOSP testkey | ⚠️ 只解决 AVB 层：重签 vbmeta（含 boot 哈希）后系统能正常启动，但过不了 ABL 的签名门槛 |
+| 换 abl / 塞 boot 分区 | ❌ 均已实测排除 |
+| Root 备选 | ✅ **APatch / KernelSU 刷 boot**（不依赖 recovery，唯一可行方向） |
 | 救砖 | ZUI15/ZUI16 售后包 9008 |
 | 规则 | **以后不要使用 TWRP** |
 
@@ -369,6 +370,68 @@ context` → SIGABRT；**屏幕是原厂 recovery 菜单**；刷回原厂 boot �
 刷回原厂 boot 后重启，设备一度停在 **`Qualcomm HS-USB Diagnostics 900E`**（`VID_05C6&PID_900E`，COM6），
 `adb`/`fastboot` 均不可用，需按键（长按电源强制断电 → 音量键）重新进 fastboot / 9008。
 本次由机主手动操作后回到系统，**数据全程未受影响**。
+
+---
+
+# 第十六部分 · 白名单决定性实验：认「联想签名」，不是认具体镜像（2026-10-03）
+
+## 16.1 设计
+
+前面已排除「换 abl」「塞 boot」，还剩最后一问：
+**ABL 认的是 ZUI16 那一个具体 recovery 镜像，还是任何联想原厂签名的 recovery？**
+
+做法：把 **ZUI15 的原厂 recovery**（同为联想签名，内容与原机那份差 **14256200 字节**）
+通过 9008 EDL 写入 `recovery_a`（LUN4 扇区 99566，25600 扇区）。
+
+## 16.2 结果
+
+| 步骤 | 实测 |
+|---|---|
+| EDL 写入 | `All Finished Successfully`，fh_loader 退出码 0 |
+| 读回验证 | 设备 `recovery_a` sha256 `d3646e0f3154e249a73de3a8b539089b…` = **ZUI15 recovery 完全一致** |
+| `reboot recovery` | ✅ **进入 recovery，屏幕显示原厂中文 recovery 菜单** |
+
+对照数据：ZUI16 原厂 recovery sha256 `ea89e4c32e490b5eacd6…`。
+
+## 16.3 结论
+
+> **ABL 的 recovery 白名单 = 联想原厂签名校验，与 ZUI 版本、与 AVB testkey 无关。**
+
+三条证据：
+
+| 组合 | 结果 |
+|---|---|
+| ZUI15 原厂 recovery（不同构建） | ✅ 能进 |
+| 我们编译的 OF（testkey 签名 + 正确 boot 哈希 + 完整 ramdisk） | ❌ 被拦 |
+| 原厂 recovery 改 1 bit | ❌ 被拦（历史实验） |
+
+**「AOSP testkey」的边界**：原厂 vbmeta 公钥恰好就是 AOSP testkey，所以**重签 vbmeta 会被接受**
+（实测：含我们 boot 哈希的 testkey vbmeta，系统照常启动）——但那只是 **AVB 层**。
+ABL 另有一层**独立的原厂 recovery 签名**校验，**它不看 AVB**。
+
+→ **OF 进不去的根本原因是没有联想签名**，不是编译错误、缺内核、cmdline、镜像头或 vbmeta 的问题。
+
+## 16.4 后续路线判定
+
+| 路线 | 判定 |
+|---|---|
+| 继续调 OF 编译参数 / 镜像头 / vbmeta | ❌ 无意义（门槛是签名） |
+| 用原厂 recovery 模板塞 OF ramdisk | ❌ 已证伪（改 1 bit 即拒） |
+| 伪造联想签名 | ❌ 无私钥、无碰撞 |
+| **APatch / KernelSU 刷 boot 拿 Root** | ✅ 唯一可行方向 |
+| 9008 换 abl / 全量刷 ZUI15 | ❌ 已实测，动摇不了这道门槛 |
+
+## 16.5 实验后设备恢复（全部完成）
+
+| 分区 | 恢复为 | 验证 |
+|---|---|---|
+| `abl_a/b` | ZUI16 | EDL 读回 sha256 `22eaf506…` 差 0 字节 |
+| `recovery_a` | 原厂 ZUI16 | fastboot 刷回 OKAY |
+| `boot_a` | 原厂 | fastboot 刷回 OKAY |
+| `vbmeta_a` | 原厂签名 | fastboot 刷回 OKAY |
+
+系统：`ZUI_16.0.544` / 槽位 `_a` / 正常启动，数据完好。
+设备 recovery 完整备份：`E:\rom\release\TB331FC-abl-downgrade\images\recovery_a_device_backup.bin`（100MB）。
 
 ---
 
