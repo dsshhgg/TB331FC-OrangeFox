@@ -43,6 +43,9 @@ TB331FC-abl-downgrade\
 ├─ run_downgrade.ps1          写 ZUI15 abl 到 abl_a/abl_b（UFS 模式，写完自动读回校验）
 ├─ run_rollback.ps1           写回 ZUI16 abl（保命）
 ├─ flash_of_and_test.ps1      诊断状态 + 刷 OrangeFox + 测进入
+├─ tests\                     **离线分发测试**（假设备桩，不需要真机）
+│  ├─ stub_device.cmd         假 adb/fastboot（用 TB331FC_FAKE_DEVICE 切换状态）
+│  └─ test_dispatch.ps1       9 条用例，已全部通过
 ├─ images\
 │  ├─ abl_zui15.img            1048576 B  sha256 349b5b40…
 │  ├─ abl_zui16_padded.img     1048576 B  sha256 22eaf506…（ZUI16 原厂 abl 补零到 1MB）
@@ -116,7 +119,6 @@ powershell -ExecutionPolicy Bypass -File .\one_click_of.ps1 -FlashOf -TestBoot
 ```
 
 **vbmeta 血统（本轮用 avbtool 复核）**
-
 ```
 avbtool info_image --image avb\vbmeta_stock_backup.img
   Public key (sha1): 2597c218aae470a130f61162feaae70afd97f011   ← = AOSP testkey = 原厂公钥
@@ -160,4 +162,56 @@ sha256 `52ecb456…` 与只读原厂目录里的 `原 boot\vbmeta.img` **逐字�
 | OF 镜像 | `E:\rom\release\OrangeFox-TB331FC\OrangeFox-new.img` |
 | OF 镜像结构 | v4 头，kernel=46819840（原厂内核），cmdline 空，ramdisk = legacy LZ4 @0x2ca8000 |
 | OF ramdisk | 解压 48MB，含 `FFiles/`、`etc/fox.cfg`、`twres/`、`init.recovery.qcom.rc`、`nvt36523_spi.ko` |
-| 可选 vbmeta | `E:\类\刷机\联想\TB331FC\镜像 img\原 boot\vbmeta.img`（ZUI16 原厂 8KB，alg=SHA256_RSA4096，flags=0） |
+| 可选 vbmeta | `E:\rom\release\OrangeFox-TB331FC\avb\vbmeta_stock_backup.img`（原厂 ZUI16，8192 B，sha256 `52ecb456…`，avbtool 公钥 sha1 `2597c218…` = AOSP testkey，flags=0，chain→vbmeta_system） |
+
+---
+
+## 七、离线取证：换 abl 会不会连 9008 都救不回？（本轮结论）
+
+担心点是「xbl 对 abl 有独立哈希/单调版本校验 → 换旧 abl 直接变砖」。本轮把三种可能逐一排查：
+
+**1. xbl / uefi_sec 里找不到 abl 的哈希**
+
+对两个 abl 各算 5 个区间的 sha256（整文件、`0..0x3000`、`0x3000..0x43000`、`0x1622..0x3000`、
+`0x3d709..0x43000`），再去 `xbl.elf` / `xbl_config.elf` / `uefi_sec.mbn`（含 ZUI15 版本）里搜哈希字节
+→ **零命中**。即**没有静态哈希表在管 abl**。
+
+**2. 两版是同一套 ELF 布局、同一套签名框架**
+
+```
+ph0 type=0 off=0x0     filesz=148
+ph1 type=0 off=0x1000  filesz=6712  memsz=8192   vaddr=0x9fa40000
+ph2 type=1 off=0x3000  filesz=262144 memsz=262144 vaddr=0x9fa00000
+```
+
+两版三个 program header 完全一致；证书链区 `0x1622..0x3000` 与尾部签名附录 `0x3d709..0x43000`
+的 sha256 **逐字节相同**（`deaf8138…` / `63597c72…`）→ 同一 Lenovo/Elm CA 链。
+
+**3. 元数据区没有单调版本号（不易被 anti-rollback 拒绝）**
+
+`ph1`（8192 B）内两版差异只有 **7 段**，全是签名与证书有效期：
+
+| 偏移 | 内容 |
+|---|---|
+| `0x108-0x1aa`（163 B） | RSA 签名 #1 |
+| `0x1ac-0x237`（140 B） | RSA 签名 #2 |
+| `0x2fb-0x305` / `0x30a-0x314` | 证书有效期：Z15 `231031021601Z`→`431026021601Z`；Z16 `240419144749Z`→`440414144749Z` |
+| `0x384-0x483` / `0x522-0x576` / `0x578-0x621` | 其余签名数据 |
+
+即 **ZUI15 abl 签于 2023-10-31，ZUI16 abl 签于 2024-04-19**，没有递增版本计数器可供拒绝回滚。
+
+**综合判断**：换 ZUI15 abl **大概率不会被 xbl 拒绝**；即便引导失败，PBL/Sahara（9008）不依赖 abl，
+仍可用 `run_rollback.ps1` 或售后包全量刷回。这不是 100% 保证，但三个最可能的拒绝机制都已排除。
+
+**离线分发测试**（`tests\test_dispatch.ps1`，不需要真机）——9 条用例全通过：
+
+```
+no device -> plan F          fastboot flash -> recovery_a / recovery_b
+fastboot  -> plan B          +DoVbmeta      -> vbmeta_a / vbmeta_b
+system    -> plan C          recovery       -> plan D
+unauthorized -> plan E       edl -> plan A（WMI 检测，文件桩无法伪造，标 MANUAL）
+DISPATCH TESTS PASSED
+```
+
+这轮测试抓出一个真 bug：`one_click_of.ps1 -FlashOf -DoVbmeta` 原本**自己刷、没调用**
+`flash_of_and_test.ps1`，导致 `-DoVbmeta` 是空操作；已改为委派并复测通过。
