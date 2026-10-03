@@ -87,6 +87,10 @@ powershell -ExecutionPolicy Bypass -File .\run_rollback.ps1
 脚本都是 **纯 ASCII 输出**（本机 PowerShell 5.1 按 GBK 读脚本，中文会乱码报错），
 中文说明只放在这份 README 里。
 
+**写入后自动读回校验**：`run_downgrade.ps1` 第 3 步用 `--sendimage` 把 abl_a/abl_b 的前 256KB 读回
+（落在 `logs\readback\`），逐字节与 `abl_zui15.img` 比对，相同才提示 PASSED。
+不想校验可加 `-SkipVerify`。该校验只读，不改设备。
+
 ---
 
 ## 四、风险（先说清楚）
@@ -108,9 +112,12 @@ powershell -ExecutionPolicy Bypass -File .\run_rollback.ps1
 | recovery 分区 | `0x6400000` = 100MB（A/B 各一） |
 | abl_a | LUN4 扇区 56838 = 0xde06000，256 扇区 × 4096B = 1MB |
 | abl_b | LUN4 扇区 206574 = 0x326ee000 |
+| 扇区大小 | **4096B**（原厂 `erase_UFS-128G.xml` 与 `rawprogram*.xml` 都这么声明，故不需要 `--sectorsizeinbytes`） |
 | ZUI15 abl | 1048576 B（有效载荷 0x43000 + 零填充） |
 | ZUI16 abl | 274432 B 有效，本包补零到 1MB 以便回滚 |
-| 两版差异 | 前 274KB 中 87.15% 字节不同，证书链区域相同 |
+| 两版差异 | 整 1MB 比 22.81%（239155 字节）；差异集中在 274KB 有效载荷内（即有效区约 87%） |
+| 是否需要先 erase | 不需要。写入覆盖全部 256 扇区 = 整个 1MB，无残留 |
+| 布局一致性 | ZUI15 与 ZUI16 两包的 `rawprogram4.xml` 中 abl_a/abl_b 完全一致（56838 / 206574 / 256 / LUN4） |
 | OF 镜像 | `E:\rom\release\OrangeFox-TB331FC\OrangeFox-new.img` |
 | OF 镜像结构 | v4 头，kernel=46819840（原厂内核），cmdline 空，ramdisk = legacy LZ4 @0x2ca8000 |
 | OF ramdisk | 解压 48MB，含 `FFiles/`、`etc/fox.cfg`、`twres/`、`init.recovery.qcom.rc`、`nvt36523_spi.ko` |
