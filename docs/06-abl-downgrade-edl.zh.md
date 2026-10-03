@@ -43,6 +43,7 @@ TB331FC-abl-downgrade\
 ├─ run_downgrade.ps1          写 ZUI15 abl 到 abl_a/abl_b（UFS 模式，写完自动读回校验）
 ├─ run_rollback.ps1           写回 ZUI16 abl（保命）
 ├─ flash_of_and_test.ps1      诊断状态 + 刷 OrangeFox + 测进入
+├─ verify_in_recovery.ps1     **进 OF 后跑验证清单**（触摸/动态分区/FBE/MTP/FastbootD，出报告）
 ├─ tests\                     **离线分发测试**（假设备桩，不需要真机）
 │  ├─ stub_device.cmd         假 adb/fastboot（用 TB331FC_FAKE_DEVICE 切换状态）
 │  └─ test_dispatch.ps1       9 条用例，已全部通过
@@ -215,3 +216,43 @@ DISPATCH TESTS PASSED
 
 这轮测试抓出一个真 bug：`one_click_of.ps1 -FlashOf -DoVbmeta` 原本**自己刷、没调用**
 `flash_of_and_test.ps1`，导致 `-DoVbmeta` 是空操作；已改为委派并复测通过。
+
+---
+
+## 八、进 OrangeFox 后的自动验证清单（`verify_in_recovery.ps1`）
+
+目标里「验证触摸 / FBE / 动态分区」不再是纯人工打勾，而是有脚本出报告：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\verify_in_recovery.ps1
+# 可选：-NoFastbootD 跳过 fastbootd 测试（该测试会重启出 recovery）
+```
+
+覆盖 15 项，逐项 PASS/WARN/FAIL/SKIP，结果落到 `logs\verify_recovery_*.txt`：
+
+| # | 检查 | 判据 |
+|---|---|---|
+| 1 | device online | `adb devices` 出现 `recovery`/`device` |
+| 2 | OrangeFox markers | `ro.twrp.version` / `ro.orangefox.version` / `/etc/fox.cfg` / `/FFiles` |
+| 3-4 | kernel up / cmdline clean | `/proc/version` 有 Linux；cmdline 不含 `buildvariant=eng` |
+| 5-6 | touch driver + dmesg | `/proc/bus/input/devices`、`nvt*.ko`、dmesg 里 nvt/novatek |
+| 7-8 | dynamic partitions / system·vendor 挂载 | `/dev/block/mapper`、`dm-*`、`/proc/mounts` |
+| 9-11 | data 挂载 / 可读 / FBE 日志 | `/data` 挂载行、`ls /data`、dmesg 里 fbe·fscrypt·keymaster |
+| 12 | MTP/USB | `sys.usb.config`、android_usb state |
+| 13-14 | mount 表 / by-name 分区 | 挂载条目数、`by-name/super` |
+| 15 | fastbootd | `fastboot getvar is-userspace` = yes |
+
+**设计注意**：脚本在**设备侧只发不带 `|` `>` 引号的单条命令**，所有过滤/聚合都在 PC 端做。
+原因是实测发现 Windows 侧向 adb 传参时，管道和重定向会被本机 shell 吃掉
+（例如 `cat /proc/bus/input/devices | grep -i nvt` 会被拆坏），这会让验证结果不可信。
+
+**离线实测**（用假设备桩）：
+
+```
+假 OrangeFox  : PASS 15 / FAIL 0 / WARN 0 / SKIP 0
+假原厂 recovery: 正确识别为 stock（OrangeFox markers = WARN，其余多为 WARN）
+无设备        : FAIL(device online) 并提示先刷 OF
+```
+
+> 顺带修掉两个自家脚本的小毛病：结果数组为空时 `.Count` 返回空（已用 `@()` 包住）；
+> `by-name` 检查在拿不到条目时改为同时看 `by-name/super` 软链，判据更稳。
