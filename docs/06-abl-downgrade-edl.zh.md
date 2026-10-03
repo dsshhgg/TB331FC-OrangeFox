@@ -536,10 +536,30 @@ abl_b (设备)  sha256 22eaf506d8c80e5c287a  → 同上
 
 ## 十五、当前设备状态与结论汇总
 
-- 设备：`HA1YPQJB`，ZUI `16.0.544`（`TB331FC_CN_OPEN_USER_Q00003.0_U_ZUI_16.0.544_ST_241115`），
-  槽位 `_a`，`verifiedbootstate=orange`，系统正常、数据完好；
-- boot_a / vbmeta_a 已恢复原厂（`cmp\stock-boot.img` + `avb\vbmeta_stock_backup.img`）；
-- recovery 分区为原厂 → **recovery 白名单依旧是拦第三方 recovery 的那道墙**；
-- 若要继续冲 OF，只剩两条实路：
-  1. **9008 换 abl**（ZUI15 abl 已在包内，命令已修正为带 `--memoryname=ufs`）后再试；
-  2. **APatch / KernelSU 刷 boot** 做 Root（不依赖 recovery）。
+**注意：设备当前在 9008（EDL）**，等待手动退出。
+
+本机上的分区实际值（截至 2026-10-03 本轮结束）：
+
+| 分区 | 当前值 | 说明 |
+|---|---|---|
+| `abl_a` / `abl_b` | **ZUI16**（sha256 `22eaf506…`） | 已从 ZUI15 回滚，EDL 读回验证 |
+| `recovery_a` | 原厂 `cmp\stock-recovery.img` | 已刷回 |
+| `boot_a` | **OF 96MB 版**（`OrangeFox-bootA-96M.img`） | ⚠️ 本轮实验残留，未恢复原厂 |
+| `vbmeta_a` | **`avb\vbmeta_bootA96_flags0.img`** | ⚠️ 同上（testkey 签名，boot 描述符指向该镜像） |
+
+**若要彻底回原厂**（系统仍可正常启动，`boot_a` 是 OF 镜像时正常启动不受影响）：
+
+```powershell
+fastboot flash boot_a   E:\rom\release\OrangeFox-TB331FC\cmp\stock-boot.img
+fastboot flash vbmeta_a E:\rom\release\OrangeFox-TB331FC\avb\vbmeta_stock_backup.img
+```
+
+**结论汇总**
+
+| 路线 | 状态 |
+|---|---|
+| 直刷第三方 recovery 到 recovery 分区 | ❌ 被白名单拦（ZUI16 abl 下） |
+| **换 ZUI15 abl 后再直刷** | ❌ **已实测证伪**（14.3）——仍被拦，且 ZUI15 abl + ZUI16 系统起不来 |
+| **把 OF 镜像塞进 boot 分区** | ❌ **已实测排除**（14.4）——用「头部与原图一字不差」的正确版镜像重测，屏幕仍是原厂 recovery |
+| vbmeta 用 AOSP testkey 重签 | ✅ 签名链被接受（含 boot 哈希时系统仍正常启动），但不足以放行第三方 recovery |
+| 剩余可行路线 | ① Root：APatch / KernelSU 刷 boot；② 9008 全量刷 ZUI15 后用 ZUI15 全套再试 |
