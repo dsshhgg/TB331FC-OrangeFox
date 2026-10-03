@@ -534,7 +534,79 @@ abl_b (设备)  sha256 22eaf506d8c80e5c287a  → 同上
 
 ---
 
-## 十五、当前设备状态与结论汇总
+## 十六、白名单到底认什么？—— 决定性实验（2026-10-03）
+
+### 16.1 实验设计
+
+前面已确认「换 ZUI15 abl 也没用」，那还剩最后一个问题：
+**ABL 认的是「ZUI16 那一个具体 recovery 镜像」，还是「任何联想原厂签名的 recovery」？**
+
+测法很干净：把 **ZUI15 的原厂 recovery** 写进 `recovery_a`（两个镜像都是联想原厂签名，但内容差 14,256,200 字节）。
+
+```xml
+<!-- write_recovery_z15.xml -->
+<program SECTOR_SIZE_IN_BYTES="4096" physical_partition_number="4"
+         start_sector="99566" num_partition_sectors="25600"
+         filename="z15-recovery.img" label="recovery_a"/>
+```
+
+流程：EDL 写入 → 读回验证 → 退出 9008 → `reboot recovery`。
+
+### 16.2 结果
+
+| 步骤 | 结果 |
+|---|---|
+| EDL 写入 ZUI15 recovery 到 `recovery_a` | `All Finished Successfully`，fh_loader 退出码 0 |
+| **读回验证** | 设备 `recovery_a` sha256 `d3646e0f3154e249a73de3a8b539089b…` = **ZUI15 recovery 完全一致** |
+| `reboot recovery` | ✅ **进入 recovery，屏幕显示原厂中文 recovery 菜单** |
+
+对照：ZUI16 原厂 recovery sha256 `ea89e4c32e490b5eacd6…`，与 ZUI15 那份**内容差 14256200 字节**。
+
+### 16.3 结论（本项目最关键的一条）
+
+> **ABL 的 recovery 白名单 = 「联想原厂签名」校验，不是绑定某一个具体镜像。**
+
+证据链：
+
+1. ZUI15 原厂 recovery（**不同构建**）→ ✅ 能进
+2. 我们编译的 OrangeFox（原厂公钥 testkey 签名、boot 哈希正确、ramdisk 完整）→ ❌ 被拦
+3. 对原厂 recovery **改 1 bit**（内容微改）→ ❌ 被拦（历史实验）
+
+→ 所以门槛是**联想对 recovery 镜像的签名**，与 ZUI 版本无关、与 AVB testkey 无关。
+
+**这也回答了「用 aosp 签名了吗」这个问题的最终形态**：
+AOSP testkey 只解决了 **AVB 层**（原厂 vbmeta 公钥恰好就是 testkey，所以重签 vbmeta 能被接受），
+但 **ABL 还有一层独立的「原厂 recovery 签名」校验，它不看 AVB**。
+没有联想的私钥，就签不出能过这一层的 recovery。
+
+**我们编的 OF 进不去，不是因为编译错了、缺内核、cmdline 不对、镜像头不对 —— 而是因为它没有联想签名。**
+
+### 16.4 对后续路线的影响
+
+| 路线 | 可行性 |
+|---|---|
+| 继续折腾 OF 编译参数 / 镜像头 / vbmeta | ❌ **没有意义**（门槛是签名，不是这些） |
+| 用原厂 recovery 当模板塞 OF ramdisk | ❌ 历史实验已证伪（内容改 1 bit 即被拒） |
+| 伪造联想签名 | ❌ 无私有钥、SHA256 不做碰撞 |
+| **APatch / KernelSU 刷 boot 拿 Root** | ✅ 不依赖 recovery，是唯一可行方向 |
+| 9008 换 abl / 全量刷 ZUI15 | ❌ 已实测，改不了这道签名门槛 |
+
+### 16.5 本次实验后的恢复
+
+| 分区 | 恢复为 |
+|---|---|
+| `abl_a` / `abl_b` | ZUI16（EDL 读回验证） |
+| `recovery_a` | 原厂 ZUI16（fastboot 刷回 `cmp\stock-recovery.img`） |
+| `boot_a` | 原厂 `cmp\stock-boot.img` |
+| `vbmeta_a` | 原厂签名 `avb\vbmeta_stock_backup.img` |
+
+系统确认：`ZUI_16.0.544` / 槽位 `_a` / 正常启动。
+
+设备 recovery 的完整备份留在 `images\recovery_a_device_backup.bin`（100MB，读取自设备）。
+
+---
+
+## 十七、当前设备状态与结论汇总
 
 **注意：设备当前在 9008（EDL）**，等待手动退出。
 
