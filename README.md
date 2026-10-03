@@ -40,9 +40,28 @@
 
 ### 建议的路
 
-- **要 Root**：走 **APatch / KernelSU 刷 boot**（不依赖 recovery）
+- **要 Root**：走 **APatch / KernelSU 刷 boot**（不依赖 recovery）—— 见下
 - **要救砖**：9008 + ZUI15/ZUI16 售后包（见 [资源索引.md](资源索引.md)）
 - **本项目规则**：**不使用 TWRP**
+
+### 已验证的 Root 素材（TB331FC / ZUI 16.0.544）
+
+| 文件 | 检查结果 |
+|---|---|
+| `boot-apn.img` | 96MB；内核 **47002080** = 原厂 46819840 + 注入 182240 字节（APatch 正常特征） |
+| `vbmeta-必刷.img` | 8192 B；公钥 sha1 **`2597c218…`** = 与原厂相同的 AOSP testkey；fingerprint = `ZUI_16.0.544_241115`（与本机系统一致） |
+
+刷入（**boot 与 vbmeta 必须成对刷**，否则 AVB 哈希不匹配）：
+
+```bash
+fastboot flash boot_a   boot-apn.img          # 只动 A 槽，B 槽保留原厂做退路
+fastboot flash vbmeta_a vbmeta-必刷.img
+fastboot reboot
+```
+
+回滚：`fastboot flash boot_a <原厂boot.img>` + `fastboot flash vbmeta_a <原厂vbmeta.img>`。
+刷 boot 不清数据。如果 `vbmeta-必刷.img` 引导失败，可改用自签 vbmeta（testkey + flags=3 禁校验，
+做法见 [06](docs/06-abl-downgrade-edl.zh.md) 第十四节）。
 
 ---
 
