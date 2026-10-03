@@ -37,7 +37,10 @@
 
 ### 仍可能有效
 - **9008 刷入无白名单的旧 abl（ZUI 15.1.105）后再刷 OF**  
-- 柚坛工具箱 / MultiPortQLoader GUI 线刷（命令行 fh_loader 写 LUN4 已失败）  
+  · **命令行已可用**：上次 `fh_loader` 写 LUN4 失败的真因是**漏了 `--memoryname=ufs`**（默认走 eMMC，报
+    `Failed to open the SDCC Device slot 0 partition 4`）。原厂 `运行我，刷机.bat` 两条命令都带该参数。  
+  · 现成包（已离线自检通过）：`E:\rom\release\TB331FC-abl-downgrade\`，跑 `run_downgrade.ps1` 即可。  
+- 柚坛工具箱 / MultiPortQLoader GUI 线刷（命令行不行时的备选，现在命令行应该能行）  
 - APatch / KernelSU 刷 boot（不依赖 recovery）  
 
 ---
@@ -99,11 +102,19 @@ adb reboot recovery
 ### 任务 A（主路径）：9008 降级 abl 后测 OF
 1. 确认设备在 **9008**（Qualcomm HS-USB QDLoader，如 COM5）。  
    - 进入：关机，**音量上 + 插 USB**；或柚坛工具箱「9008模式」。  
-2. 用 **柚坛工具箱 → 线刷** 或 MultiPortQLoader/QFIL，刷 **ZUI 15.1.105** 售后包（至少 **abl**；全包可能清数据，先声明风险）。  
+2. **首选：现成脚本包**（已离线自检通过）  
+   `E:\rom\release\TB331FC-abl-downgrade\`  
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File .\verify_staging.ps1     # 离线自检
+   powershell -ExecutionPolicy Bypass -File .\detect_9008.ps1        # 找 COM 口
+   powershell -ExecutionPolicy Bypass -File .\run_downgrade.ps1      # 写 ZUI15 abl 到 a/b
+   ```
+   - 关键：`--memoryname=ufs`（上次失败真因不是 LUN 参数，而是漏了存储类型）
+   - 写坏/开不了机：`run_rollback.ps1`（写回 ZUI16 abl）
+3. 备选：**柚坛工具箱 → 线刷** 或 MultiPortQLoader GUI，刷 **ZUI 15.1.105** 售后包（全包可能清数据，先声明风险）。  
    - 勿依赖包内 `flash.bat`（`-s %1` 空序列号会挂）。  
-   - 命令行 `fh_loader --lun=4` 写 abl 已失败，优先 GUI。  
-3. 若系统可启动或至少 fastboot 可用：刷入 **OrangeFox**（路径见上），用 `adb reboot recovery` / 实体键进入。  
-4. 记录：version 无法读时，用是否进 rec 判断 abl 是否更换。
+4. 系统可启动或 fastboot 可用时：刷入 **OrangeFox**（`flash_of_and_test.ps1`），用 `adb reboot recovery` / 实体键进入。  
+5. 记录：`version-bootloader` 为空，无法读版本；用**是否进 rec** 判断 abl 是否更换。
 
 ### 任务 B：若 A 失败
 - 正式结论「ZUI16+当前 abl 无法第三方 rec」。  
