@@ -34,14 +34,21 @@
 - TWRP/OF ramdisk 套原厂头  
 - 有效内容改 1bit + 匹配哈希  
 - 用 64KB vbmeta 解决 ZUI16 启动  
+- **9008 换 ZUI15 abl**（2026-10-03 实测：写入成功、读回确认两槽均为 ZUI15 `349b5b40…`，
+  第三方 recovery **仍被拦**；且 ZUI15 abl + ZUI16 系统起不来）  
+- **把 OF 镜像塞进 boot 分区**（含「头部与原镜像一字不差」的 96MB 正确版 + 匹配 vbmeta：
+  `reboot recovery` 后屏幕仍是原厂 recovery 菜单 → 说明 recovery 模式下走的是 recovery 分区）  
+
+### 决定性结论：白名单 = 联想原厂签名（2026-10-03 实测）
+- 把 **ZUI15 原厂 recovery**（联想签名，与 ZUI16 那份内容差 14,256,200 字节）刷进 `recovery_a`
+  → ✅ **能进 recovery**；我们编译的 OF → ❌ 被拦。  
+- ⇒ 门槛是**联想对 recovery 镜像的签名**，与 ZUI 版本无关；
+  AOSP testkey 只在 **AVB 层**有效（重签 vbmeta 含 boot 哈希后系统能正常启动），
+  **ABL 另有一层独立签名校验，不看 AVB**。  
+- ⇒ 无私钥则第三方 recovery **不可能启动**，别再投入适配。
 
 ### 仍可能有效
-- **9008 刷入无白名单的旧 abl（ZUI 15.1.105）后再刷 OF**  
-  · **命令行已可用**：上次 `fh_loader` 写 LUN4 失败的真因是**漏了 `--memoryname=ufs`**（默认走 eMMC，报
-    `Failed to open the SDCC Device slot 0 partition 4`）。原厂 `运行我，刷机.bat` 两条命令都带该参数。  
-  · 现成包（已离线自检通过）：`E:\rom\release\TB331FC-abl-downgrade\`，跑 `run_downgrade.ps1` 即可。  
-- 柚坛工具箱 / MultiPortQLoader GUI 线刷（命令行不行时的备选，现在命令行应该能行）  
-- APatch / KernelSU 刷 boot（不依赖 recovery）  
+- **APatch / KernelSU 刷 boot**（不依赖 recovery）—— 唯一可行方向
 
 ---
 
