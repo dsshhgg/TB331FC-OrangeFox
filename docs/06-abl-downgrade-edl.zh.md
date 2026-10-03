@@ -43,6 +43,7 @@ TB331FC-abl-downgrade\
 ├─ run_downgrade.ps1          写 ZUI15 abl 到 abl_a/abl_b（UFS 模式，写完自动读回校验）
 ├─ run_rollback.ps1           写回 ZUI16 abl（保命）
 ├─ flash_of_and_test.ps1      诊断状态 + 刷 OrangeFox + 测进入
+├─ flash_of_to_boot.ps1       **把 OF 塞进 boot 分区**（含 vbmeta 重签步骤，只动一个槽）
 ├─ verify_in_recovery.ps1     **进 OF 后跑验证清单**（触摸/动态分区/FBE/MTP/FastbootD，出报告）
 ├─ tests\                     **离线分发测试**（假设备桩，不需要真机）
 │  ├─ stub_device.cmd         假 adb/fastboot（用 TB331FC_FAKE_DEVICE 切换状态）
@@ -255,7 +256,62 @@ DISPATCH TESTS PASSED
 
 ---
 
-## 八、进 OrangeFox 后的自动验证清单（`verify_in_recovery.ps1`）
+## 九、重大发现（2026-10-03 实测）：boot 分区**不受** recovery 白名单限制
+
+这是本项目第一次**真正进入 recovery 模式**，路径是「不用 recovery 分区，把镜像塞进 boot」。
+
+### 9.1 做了什么
+
+1. 用 avbtool 以 **AOSP testkey** 重签 vbmeta：保留原厂 30 个描述符（去掉原 `boot` 描述符），
+   加入**我们镜像**的 boot 哈希（沿用原厂 salt `0b8f7e2f…`），另有 flags=3 版本。产物：
+   `E:\rom\release\OrangeFox-TB331FC\avb\vbmeta_bootfix_flags0.img` / `_flags3.img`
+2. 重建镜像 `OrangeFox-boot.img` = 原厂 boot 头 + **原厂 GKI 内核（46819840 B）** + OF ramdisk（23860970 B）
+3. `fastboot flash vbmeta_a` + `fastboot flash boot_a`（**只动 A 槽**，B 槽保持原厂）
+
+### 9.2 结果（设备 `HA1YPQJB`）
+
+| 观察点 | 实测值 | 含义 |
+|---|---|---|
+| 刷入 | `vbmeta_a` OKAY / `boot_a` 98304 KB OKAY | 写入成功 |
+| `slot-unbootable:a` | **yes → no** | 引导层把它当可用镜像 |
+| `fastboot reboot recovery` 后 | 出现 **USB `VID_18D1&PID_D001`**（Android Composite ADB Interface） | **这是 recovery 模式标识** |
+| `adb get-state` | **recovery** | 设备确实进了 recovery |
+| 屏幕 | 黑屏 | recovery 第二阶段/图形没起来 |
+| `adb shell`（任意命令） | `adbd F shell_service.cpp:380 Could not set SELinux context for subprocess` → `libc Fatal signal 6 (SIGABRT)` | adbd 在跑但 sepolicy 不完整 |
+| 回滚 | 刷回 `cmp\stock-boot.img` → 系统正常启动 | 可安全回退 |
+
+系统侧复核（刷回原厂 boot 后）：
+
+```
+ro.build.display.id       = TB331FC_CN_OPEN_USER_Q00003.0_U_ZUI_16.0.544_ST_241115
+ro.boot.slot_suffix       = _a
+ro.boot.verifiedbootstate = orange
+```
+且**我们重签的 `vbmeta_a` 仍留在设备上、系统正常启动** → 说明 **testkey 签名链被引导层接受**。
+
+### 9.3 结论
+
+1. **recovery 分区那道白名单是真的**（此前所有第三方 recovery 直刷 recovery 分区都被拦/跳过）；
+2. **boot 分区不在白名单范围内** —— 把镜像塞进 boot 后，引导层**放行并进入了 recovery 模式**；
+3. 因此「AVB 层面」这条路是通的（testkey 签名 + 正确的 boot 哈希 = 系统都照常启动）；
+4. 剩下的失败点是 **OF recovery 自身在 boot 路径下的启动/显示/初始化**，不是引导层拦截。
+
+### 9.4 下次可试（未执行，B 方案暂缓）
+
+- 用 `-Vbmeta flags3`（禁校验）再试，减少 recovery 受到的约束；
+- 把 **原厂 boot ramdisk 与 OF ramdisk 合并**成同一镜像：正常情况下能启动系统、进 recovery 时跑 OF ——
+  这样失败也不用救机（当前失败会导致系统也起不来，必须手动回 fastboot 刷回）；
+- 查黑屏根因方向：fb/panel 驱动初始化、recovery 的 `init.recovery.*.rc` 是否执行到、sepolicy 是否加载完整。
+
+### 9.5 提醒：900E 状态
+
+刷回原厂 boot 后重启，设备一度停在 **`Qualcomm HS-USB Diagnostics 900E`（USB `VID_05C6&PID_900E`，COM6）**：
+此状态下 `adb` / `fastboot` 都不可用，需要用按键（长按电源强制断电后按音量键）重新进 fastboot 或 9008。
+本次由机主手动操作后回到系统，**数据全程未受影响**。
+
+---
+
+## 十、进 OrangeFox 后的自动验证清单（`verify_in_recovery.ps1`）
 
 目标里「验证触摸 / FBE / 动态分区」不再是纯人工打勾，而是有脚本出报告：
 
