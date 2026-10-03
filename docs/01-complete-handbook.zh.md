@@ -318,52 +318,58 @@ ERROR: Failed to open device, type:eMMC, slot:0, lun:4 error:3
 
 ---
 
-# 第十五部分 · 突破：boot 分区不受 recovery 白名单限制（2026-10-03 实测）
+# 第十五部分 · boot 分区实验（2026-10-03）—— **结论：此路不通（已排除）**
 
-> 这是全项目**第一次真正进入 recovery 模式**。路径：绕开 recovery 分区，把镜像塞进 boot。
+> ⚠️ 本节最初写成「突破：boot 分区不受白名单限制」。**对照实验推翻了它**，以下为修正版。
 
 ## 15.1 手法
 
-1. **重签 vbmeta**（用 AOSP testkey）：保留原厂全部 30 个描述符，只把 `boot` 描述符换成
-   **我们镜像**的哈希（沿用原厂 salt `0b8f7e2f…`），再用 testkey 正式签名。
-   产物：`avb\vbmeta_bootfix_flags0.img`（flags=0）、`avb\vbmeta_bootfix_flags3.img`（flags=3）。
-   校验：序列化后描述符区 **5032 字节 = 原厂描述符区大小**，公钥 sha1 `2597c218…` 与原厂一致。
-2. **重建镜像** `OrangeFox-boot.img` = 原厂 boot 头 + 原厂 GKI 内核（46819840 B）+ OF ramdisk
-   （23860970 B，7 个 legacy-LZ4 块，解压 48.5 MB），占用 67.4 MB / 96 MB。
-3. `fastboot flash vbmeta_a` + `fastboot flash boot_a`（**只动 A 槽**，B 槽原厂不动）。
+1. **重签 vbmeta**（AOSP testkey）：保留原厂 30 个描述符，把 `boot` 描述符换成我们镜像的哈希
+   （沿用原厂 salt `0b8f7e2f…`），另出 flags=3 版。产物 `avb\vbmeta_bootfix_flags0.img` / `_flags3.img`。
+2. **重建镜像** `OrangeFox-boot.img` = 原厂 boot 头 + 原厂 GKI 内核（46819840 B）+ OF ramdisk（23860970 B）。
+3. `fastboot flash vbmeta_a` + `fastboot flash boot_a`（只动 A 槽）。
 
-## 15.2 实测结果（设备 HA1YPQJB）
+## 15.2 现象
 
-| 观察点 | 实测 | 含义 |
+`vbmeta_a`/`boot_a` 刷入 OKAY、`slot-unbootable:a` yes→no；重启后 `adb` 显示 `recovery`、
+`adb get-state=recovery`、USB `VID_18D1&PID_D001`；`adb shell` 任意命令 → `Could not set SELinux
+context` → SIGABRT；**屏幕是原厂 recovery 菜单**；刷回原厂 boot 后系统正常，数据无损。
+
+## 15.3 决定性对照（推翻结论）
+
+用**纯原厂状态**再进一次 recovery：
+
+| 配置 | `adb get-state` | `adb shell` |
 |---|---|---|
-| `vbmeta_a` / `boot_a` 刷入 | OKAY / 98304 KB OKAY | 写入成功 |
-| `slot-unbootable:a` | **yes → no** | 引导层视为可用 |
-| 重启后 USB | **`VID_18D1&PID_D001`** | **recovery 模式标识** |
-| `adb get-state` | **recovery** | 确认进入 recovery |
-| 屏幕 | 黑屏 | recovery 第二阶段/图形未起 |
-| `adb shell` | `Could not set SELinux context for subprocess` → SIGABRT | adbd 在跑，sepolicy 不完整 |
-| 回滚 | 刷回 `cmp\stock-boot.img` → 系统启动 | 可安全回退 |
+| 纯原厂（boot/vbmeta/recovery 全原厂） | `recovery` | **崩溃，报同一个 SELinux 错误** |
+| boot_a 放 OF 镜像（flags0 / flags3） | `recovery` | 崩溃，完全一致 |
 
-系统侧复核：`ZUI_16.0.544_ST_241115`、`slot _a`、`verifiedbootstate=orange`，
-且**重签 vbmeta 留在设备上系统仍正常启动** → **testkey 签名链被引导层接受**。
+→ 行为**无差别**，因此：
 
-## 15.3 修正此前结论
+1. `adb shell` 崩溃是**原厂 recovery 的固有行为**，不能作为 OF 故障判据；
+2. `adb get-state=recovery` / USB `D001` 只是 recovery 模式标识，**不能证明 OF 在运行**；
+3. 屏幕显示的是**原厂 recovery 菜单** → recovery 模式下走的是 **recovery 分区**，
+   塞进 `boot_a` 的镜像看不出被执行；flags3 与 flags0 结果相同 → 与 AVB 校验无关。
 
-- 旧结论「第三方 recovery 一律进不去」**需限定**：直刷 **recovery 分区**会被白名单拦；
-  但**放进 boot 分区可以进 recovery 模式**。
-- 真正的卡点从「引导层白名单」变成了「OF recovery 在 boot 路径下的自身启动/显示初始化」。
+## 15.4 修正后的结论
 
-## 15.4 下次可试（B 方案暂缓，未执行）
+- **「塞 boot 分区绕过 recovery 白名单」在本机不成立**，白名单依旧是拦第三方 recovery 的那道墙；
+- 此前「boot 分区不受白名单限制」的说法**作废**。
 
-1. `-Vbmeta flags3`（禁校验）再试，减少 recovery 受的约束；
-2. **合并 ramdisk**：原厂 boot ramdisk + OF ramdisk 放同一镜像 —— 正常启动走系统、进 recovery 跑 OF，
-   失败也不会导致系统起不来（不用救机）；
-3. 黑屏根因排查方向：fb/panel 驱动初始化、`init.recovery.*.rc` 是否执行到、sepolicy 是否完整加载。
+## 15.5 仍然有效的收获
 
-## 15.5 坑：刷完重启落到 900E
+1. **vbmeta 可用 AOSP testkey 重签**：boot 描述符换成我们镜像哈希后**系统仍正常启动**（`verifiedbootstate=orange`）；
+2. **分区结构事实**：`boot_a` = 头(4096)+内核(46819840)+AVB 块(896)，**无 ramdisk**；
+   `vendor_boot_a` 才是正常启动的 ramdisk（`VNDRBOOT` v4，11553237 B，legacy LZ4，
+   cmdline `video=vfb:640x400,bpp=32,memsize=3072000 bootconfig`）；
+   ZUI16 原厂 recovery 镜像 sha256 `EA89E4C3…`；
+3. **诊断教训**：`adb get-state=recovery` 与 `adb shell` 崩溃**都不能**判断 OF 是否启动，只能看屏幕；
+4. 可复用产物：`OrangeFox-boot.img`、两个重签 vbmeta、`flash_of_to_boot.ps1`。
+
+## 15.6 坑：刷完重启落到 900E
 
 刷回原厂 boot 后重启，设备一度停在 **`Qualcomm HS-USB Diagnostics 900E`**（`VID_05C6&PID_900E`，COM6），
-此状态下 `adb`/`fastboot` 均不可用，需按键（长按电源强制断电 → 音量键）重新进 fastboot / 9008。
+`adb`/`fastboot` 均不可用，需按键（长按电源强制断电 → 音量键）重新进 fastboot / 9008。
 本次由机主手动操作后回到系统，**数据全程未受影响**。
 
 ---
