@@ -37,6 +37,8 @@
 | version-bootloader | 空 |
 | testkey sha1 | 2597c218aae470a130f61162feaae70afd97f011 |
 | 原厂 boot kernel | 46819840 raw，cmdline 空 |
+| 存储类型 | **UFS**（9008 写分区必须 `--memoryname=ufs`，否则 LUN4 打不开） |
+| LUN4 扇区 | abl_a 56838 / abl_b 206574（4096B 扇区） |
 | AVB recovery 哈希范围 | 14577664 有效字节（不含 padding） |
 | 出厂 recovery 头 | v4，kernel=0，os_version=0，sig_size=0 |
 
@@ -124,7 +126,7 @@ GitHub：dsshhgg/TB331FC-TWRP 分支 fox-12.1
 20. testkey 相同仍失败  
 21. 1-bit 也失败  
 22. abl/xbl 只能 9008  
-23. fh_loader LUN4 失败  
+23. fh_loader LUN4 失败 —— **真因是漏 `--memoryname=ufs`**（默认 eMMC），非 LUN 参数错  
 24. ZUI15/16 混刷危险  
 25. flash.bat `-s %1` 会挂  
 26. 勿写原厂包目录  
@@ -229,6 +231,8 @@ abl payload      = 0x43000
 
 # 第十二部分 · 最终建议
 
+0. **先做**：跑 `E:\rom\release\TB331FC-abl-downgrade\verify_staging.ps1` 自检，
+   设备一接上就按该目录 README 执行「9008 换 ZUI15 abl」（这次带 `--memoryname=ufs`）。
 1. 要 **OF**：9008 换 ZUI15 **abl** 后再测。  
 2. 要 **Root**：APatch/KernelSU 刷 boot。  
 3. **开不了机**：9008 售后包救砖。  
@@ -247,6 +251,68 @@ abl payload      = 0x43000
 - 柚坛工具箱、MultiPortQLoader、刷机匣（EDL 刷写工具）
 - 酷安 TB331FC 社区、XDA 联想平板讨论帖
 - 所有提供 ZUI 15 售后包、OF 迁移包、GSI 套件的社区贡献者
+
+---
+
+# 第十四部分 · abl 降级包（离线准备完成，未执行）
+
+> 本轮新增。设备当时不便连接，故把「换 abl」所需的一切离线备好并自检通过。
+
+## 14.1 上次 9008 写 abl 失败的真正原因（已定位）
+
+历史命令：
+
+```
+tools\fh_loader.exe --port=\\.\COM5 --lun=4 --search_path=. --sendxml=abl_only.xml --noprompt --noreset --showpercentagecomplete
+```
+
+**漏了 `--memoryname=ufs`**。fh_loader 默认按 eMMC 通信，目标端回：
+
+```
+ERROR: Failed to open the SDCC Device slot 0 partition 4
+ERROR: Failed to open device, type:eMMC, slot:0, lun:4 error:3
+→ NAK → program FAILED
+```
+
+依据：原厂 ZUI16 包 `运行我，刷机.bat` 的两条 fh_loader 命令**都带 `--memoryname=ufs`**，
+而这台是 **UFS** 存储。所以不是 LUN/扇区写错，是**存储类型没声明**。
+
+## 14.2 交付物
+
+`E:\rom\release\TB331FC-abl-downgrade\`
+
+| 文件 | 作用 |
+|---|---|
+| `verify_staging.ps1` | 离线自检（只读，全部检查已通过） |
+| `detect_9008.ps1` | 探测 9008 端口 |
+| `run_downgrade.ps1` | 写 ZUI15 abl → `abl_a`/`abl_b`（UFS 模式，支持 `-WhatIf`） |
+| `run_rollback.ps1` | 写回 ZUI16 abl（保命） |
+| `flash_of_and_test.ps1` | 状态诊断 + 刷 OF + 测进入 |
+| `images\abl_zui15.img` | 1048576 B，sha256 `349b5b40…` |
+| `images\abl_zui16_padded.img` | 1048576 B，sha256 `22eaf506…`（原厂 274432 B 补零） |
+| `images\write_abl_zui15.xml` / `write_abl_zui16.xml` | abl_a @LUN4 扇区 56838、abl_b @206574 |
+| `tools\fh_loader.exe`、`QSaharaServer.exe` | EDL 工具 |
+
+> 脚本刻意写成**纯 ASCII 输出**：本机 Windows PowerShell 5.1 按 GBK 读脚本文件，
+> 中文会乱码并触发语法错误。中文说明集中在同目录 `README.md`。
+
+## 14.3 本轮镜像独立核对
+
+- `OrangeFox-new.img`：`ANDROID!` + **v4 头**，`kernel_size=46819840`（原厂内核已打包），
+  `cmdline` 为空，ramdisk 为 **legacy LZ4**（magic `0x184C2102`）位于 `0x2ca8000`，
+  解压 **48MB**，内含 `FFiles/`、`etc/fox.cfg`、`twres/`、`init.recovery.qcom.rc`、
+  `vendor/lib/modules/1.1/nvt36523_spi.ko`（触摸驱动）→ **镜像本身完整**。
+- vbmeta 核对：`avb\vbmeta_stock_backup.img` = 8192 B（ZUI16 原厂，alg=SHA256_RSA4096，flags=0）；
+  ZUI15 `images\vbmeta.img` = 65536 B（同 alg，flags=0，尾部 56KB 零填充）；
+  两者 aux 结构一致（6080），我们自签那版 aux=1088，与二者都不同。
+
+## 14.4 下一步（设备接上后按序）
+
+1. `verify_staging.ps1` → `detect_9008.ps1` → `run_downgrade.ps1`（9008 写 ZUI15 abl）
+2. 长按电源+音量下退出 9008；能进系统就 `flash_of_and_test.ps1` 刷 OF 并 `adb reboot recovery`
+3. 进不去 → 记录现象（fastboot / 黑屏 / 卡 Logo）；开不了机 → `run_rollback.ps1`
+4. 顺手可做：`E:\LTBox-win_x86_64-v3.3.3` 已在机上（v3.1.4+ 的 testkey 漏洞检测），
+   可作「引导层还有什么可利用点」的旁证
 
 ---
 
