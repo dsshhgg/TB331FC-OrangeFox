@@ -226,13 +226,14 @@ ph2 type=1 off=0x3000  filesz=262144 memsz=262144 vaddr=0x9fa00000
 | `abl_a` | 4 | 56838 (0xde06000) | 256 | `abl.img` | ✅ 1048576 B |
 | `abl_b` | 4 | 206574 (0x326ee000) | 256 | `abl.img` | ✅ |
 | `boot_a` / `boot_b` | 4 | 65414 / 215150 | 24576 | `boot.img` | ✅ 100663296 B |
-| `init_boot_a` | 4 | 97518 | 2048 | `init_boot.img` | ✅ 8388608 B |
-| `vbmeta_a` / `vbmeta_b` | 4 | 90294 / (b 槽) | 16 | `vbmeta.img` | ✅ 65536 B |
-| `vbmeta_system_a` | 0 | 3235720 | 16 | `vbmeta_system.img` | ✅ 65536 B |
-| `dtbo_a` | 4 | 90310 | 6144 | `dtbo.img` | ✅ 25165824 B |
-| `recovery_a` | 4 | 99566 | 25600 | `recovery.img` | ✅ 104857600 B |
-| `recovery_b` | 4 | 247254 | 25600 | （原厂该槽为空，未刷） | — |
-| `vendor_boot_a` | 4 | 125166 | 24576 | `vendor_boot.img` | ✅ 100663296 B |
+| `init_boot_a` / `init_boot_b` | 4 | 97518 / 297430 | 2048 | `init_boot.img` | ✅ 8388608 B |
+| `vbmeta_a` / `vbmeta_b` | 4 | 90294 / 240030 | 16 | `vbmeta.img` | ✅ 65536 B |
+| `vbmeta_system_a` / `_b` | 0 | 3235720 / 3235736 | 16 | `vbmeta_system.img` | ✅ 65536 B |
+| `dtbo_a` / `dtbo_b` | 4 | 90310 / 240046 | 6144 | `dtbo.img` | ✅ 25165824 B |
+| `recovery_a` / `_b` | 4 | 99566 / 247254 | 25600 | `recovery.img` | ✅ 104857600 B |
+| `vendor_boot_a` / `_b` | 4 | 125166 / 272854 | 24576 | `vendor_boot.img` | ✅ 100663296 B |
+| `super`（动态分区容器） | 0 | 89992 | 3145728 | `super.img` | ❌ 未解包（12GB） |
+| `metadata`（FBE 包裹密钥） | 0 | 3235752 | 16384 | `metadata.img` | ❌ 未解包 |
 
 **逐条目核验结果**：ZUI15 解包目录里 **17 个条目尺寸与声明完全一致、0 个超出、0 个不足**；
 44 个「不足」全部是**本目录未解包的其它固件**（`xbl.img` 之外还有 `rpm/tz/hyp/modem/dsp/keymaster/
