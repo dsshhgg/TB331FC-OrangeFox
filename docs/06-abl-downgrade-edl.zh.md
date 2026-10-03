@@ -38,7 +38,8 @@ TB331FC-abl-downgrade\
 ├─ README.md                  本说明
 ├─ verify_staging.ps1         离线自检（只读，已跑通：ALL CHECKS PASSED）
 ├─ detect_9008.ps1            检测 9008 端口（只读）
-├─ run_downgrade.ps1          写 ZUI15 abl 到 abl_a/abl_b（UFS 模式）
+├─ check_abl_version.ps1      读回 abl 判断当前是 ZUI15 还是 ZUI16（只读，写之前先跑）
+├─ run_downgrade.ps1          写 ZUI15 abl 到 abl_a/abl_b（UFS 模式，写完自动读回校验）
 ├─ run_rollback.ps1           写回 ZUI16 abl（保命）
 ├─ flash_of_and_test.ps1      诊断状态 + 刷 OrangeFox + 测进入
 ├─ images\
@@ -74,8 +75,9 @@ powershell -ExecutionPolicy Bypass -File .\verify_staging.ps1
 
 # 1) 平板完全关机 -> 按住【音量上】不放 -> 插数据线（进 9008）
 powershell -ExecutionPolicy Bypass -File .\detect_9008.ps1
+powershell -ExecutionPolicy Bypass -File .\check_abl_version.ps1   # 只读：当前是 15 还是 16
 powershell -ExecutionPolicy Bypass -File .\run_downgrade.ps1 -WhatIf   # 演练，不写入
-powershell -ExecutionPolicy Bypass -File .\run_downgrade.ps1           # 真写入
+powershell -ExecutionPolicy Bypass -File .\run_downgrade.ps1           # 真写入 + 自动读回校验
 
 # 2) 长按【电源】+【音量下】8 秒退出 9008
 #    能进系统 -> 刷 OF 并测试
