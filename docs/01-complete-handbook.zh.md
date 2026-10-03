@@ -12,8 +12,10 @@
 |---|---|
 | 目标 | 启动 **OrangeFox Recovery** |
 | 编译/CI/设备树 | ✅ 已完成（fox-12.1 / build-fox.yml） |
-| 设备启动 OF | ❌ **ABL recovery 白名单**拦截 |
-| AOSP testkey | ✅ 与原厂公钥相同，仍不够 |
+| 设备启动 OF | ⚠️ **部分成功**：塞进 boot 分区后**已进入 recovery 模式**，但界面黑屏 |
+| 直刷 recovery 分区 | ❌ ABL recovery 白名单拦截 |
+| boot 分区 | ✅ **不受白名单限制**（2026-10-03 实测，见第十四部分 14.5） |
+| AOSP testkey | ✅ 与原厂公钥相同；重签 vbmeta 含 boot 哈希后系统正常启动 |
 | 伪装原厂 | ❌ 有效内容锁定 |
 | Root 备选 | APatch / KernelSU 刷 boot |
 | 救砖 | ZUI15/ZUI16 售后包 9008 |
@@ -313,6 +315,56 @@ ERROR: Failed to open device, type:eMMC, slot:0, lun:4 error:3
 3. 进不去 → 记录现象（fastboot / 黑屏 / 卡 Logo）；开不了机 → `run_rollback.ps1`
 4. 顺手可做：`E:\LTBox-win_x86_64-v3.3.3` 已在机上（v3.1.4+ 的 testkey 漏洞检测），
    可作「引导层还有什么可利用点」的旁证
+
+---
+
+# 第十五部分 · 突破：boot 分区不受 recovery 白名单限制（2026-10-03 实测）
+
+> 这是全项目**第一次真正进入 recovery 模式**。路径：绕开 recovery 分区，把镜像塞进 boot。
+
+## 15.1 手法
+
+1. **重签 vbmeta**（用 AOSP testkey）：保留原厂全部 30 个描述符，只把 `boot` 描述符换成
+   **我们镜像**的哈希（沿用原厂 salt `0b8f7e2f…`），再用 testkey 正式签名。
+   产物：`avb\vbmeta_bootfix_flags0.img`（flags=0）、`avb\vbmeta_bootfix_flags3.img`（flags=3）。
+   校验：序列化后描述符区 **5032 字节 = 原厂描述符区大小**，公钥 sha1 `2597c218…` 与原厂一致。
+2. **重建镜像** `OrangeFox-boot.img` = 原厂 boot 头 + 原厂 GKI 内核（46819840 B）+ OF ramdisk
+   （23860970 B，7 个 legacy-LZ4 块，解压 48.5 MB），占用 67.4 MB / 96 MB。
+3. `fastboot flash vbmeta_a` + `fastboot flash boot_a`（**只动 A 槽**，B 槽原厂不动）。
+
+## 15.2 实测结果（设备 HA1YPQJB）
+
+| 观察点 | 实测 | 含义 |
+|---|---|---|
+| `vbmeta_a` / `boot_a` 刷入 | OKAY / 98304 KB OKAY | 写入成功 |
+| `slot-unbootable:a` | **yes → no** | 引导层视为可用 |
+| 重启后 USB | **`VID_18D1&PID_D001`** | **recovery 模式标识** |
+| `adb get-state` | **recovery** | 确认进入 recovery |
+| 屏幕 | 黑屏 | recovery 第二阶段/图形未起 |
+| `adb shell` | `Could not set SELinux context for subprocess` → SIGABRT | adbd 在跑，sepolicy 不完整 |
+| 回滚 | 刷回 `cmp\stock-boot.img` → 系统启动 | 可安全回退 |
+
+系统侧复核：`ZUI_16.0.544_ST_241115`、`slot _a`、`verifiedbootstate=orange`，
+且**重签 vbmeta 留在设备上系统仍正常启动** → **testkey 签名链被引导层接受**。
+
+## 15.3 修正此前结论
+
+- 旧结论「第三方 recovery 一律进不去」**需限定**：直刷 **recovery 分区**会被白名单拦；
+  但**放进 boot 分区可以进 recovery 模式**。
+- 真正的卡点从「引导层白名单」变成了「OF recovery 在 boot 路径下的自身启动/显示初始化」。
+
+## 15.4 下次可试（B 方案暂缓，未执行）
+
+1. `-Vbmeta flags3`（禁校验）再试，减少 recovery 受的约束；
+2. **合并 ramdisk**：原厂 boot ramdisk + OF ramdisk 放同一镜像 —— 正常启动走系统、进 recovery 跑 OF，
+   失败也不会导致系统起不来（不用救机）；
+3. 黑屏根因排查方向：fb/panel 驱动初始化、`init.recovery.*.rc` 是否执行到、sepolicy 是否完整加载。
+
+## 15.5 坑：刷完重启落到 900E
+
+刷回原厂 boot 后重启，设备一度停在 **`Qualcomm HS-USB Diagnostics 900E`**（`VID_05C6&PID_900E`，COM6），
+此状态下 `adb`/`fastboot` 均不可用，需按键（长按电源强制断电 → 音量键）重新进 fastboot / 9008。
+本次由机主手动操作后回到系统，**数据全程未受影响**。
 
 ---
 
