@@ -102,3 +102,40 @@ OrangeFox 产物已做到：
 1. 先做「1-bit 有效内容 + 匹配哈希 vbmeta」实验，再决定是否投入 OF 适配  
 2. padding 可自由使用（可用于藏数据，不能改 recovery 功能）  
 3. Root 请走 **boot 分区**（APatch / KernelSU），不要依赖 recovery  
+
+---
+
+## 2026-10-03 补充：决定性实验（把结论钉死）
+
+本报告的推断已由两个后续实验完整验证，**「白名单 = 联想原厂签名」现在是实测结论，不再是推断**。
+
+**实验一：换 abl 无效**
+
+| 步骤 | 结果 |
+|---|---|
+| EDL 读回设备 abl | **ZUI16**（sha256 `22eaf506…`，与 ZUI15 差 239155 字节） |
+| 用 `--memoryname=ufs` 写入 ZUI15 abl | ✅ 成功，读回确认两槽 = `349b5b40…` |
+| 刷 OF 到 `recovery_a` + `reboot recovery` | ❌ **仍回落 fastboot** |
+| ZUI15 abl 配 ZUI16 系统 | ❌ 系统也起不来 |
+
+→ **「换旧 abl 绕过白名单」证伪。**
+
+**实验二：白名单认「联想签名」，不认具体镜像**
+
+| 刷入 `recovery_a` 的镜像 | 结果 |
+|---|---|
+| ZUI15 **原厂** recovery（联想签名，与 ZUI16 那份内容差 14,256,200 字节） | ✅ **能进 recovery** |
+| 我们编译的 OF（testkey 签名 + 正确 boot 哈希 + 完整 ramdisk） | ❌ 被拦 |
+| 原厂 recovery 改 1 bit | ❌ 被拦 |
+
+→ **门槛是联想对 recovery 镜像的签名**，与 ZUI 版本无关；
+AOSP testkey 只在 **AVB 层**有效（重签 vbmeta 会被接受、系统能正常启动），
+**ABL 另有一层独立签名校验，不看 AVB**。
+
+**结论**：没有联想私钥，第三方 recovery 在这台设备上**无法启动**；
+后续应直接走 **APatch / KernelSU 刷 boot**。
+
+**附带两个操作要点（后来者省时）**
+- EDL 写 abl/分区**必须** `--memoryname=ufs`，否则报 `Failed to open SDCC ... lun:4`
+- `fh_loader --sendimage` 是「发送本地文件」，**读回**要用 `<read .../>` 的 XML + `--sendxml` + `--mainoutputdir`
+- 每次重进 9008 都要重新送 firehose；协议失步时用 `QSaharaServer ... -k` 复位
