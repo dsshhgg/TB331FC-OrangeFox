@@ -57,6 +57,15 @@ TB331FC-abl-downgrade\
 
 ## 三、执行顺序（你在电脑上操作）
 
+**先按设备现状选一条：**
+
+| 设备现状 | 先做什么 |
+|---|---|
+| 能开机进系统（ZUI15 或 ZUI16） | 直接 `flash_of_and_test.ps1` 刷 OF 试一次；进不去再换 abl |
+| 停在 fastboot | 先 `fastboot reboot` / 切槽回系统；或直接刷 OF 测试 |
+| 黑屏 / 只能 9008 | `run_downgrade.ps1` 换 abl 后测；不行再 `run_rollback.ps1` |
+| 完全不确定 | 先 `detect_9008.ps1` + `flash_of_and_test.ps1`（它第一步就打印全部状态） |
+
 ```powershell
 cd E:\rom\release\TB331FC-abl-downgrade
 
