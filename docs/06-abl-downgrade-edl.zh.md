@@ -323,6 +323,30 @@ ro.boot.verifiedbootstate = orange
   （可能方向：`init.recovery.*.rc` 是否执行到、`msm_drm.ko`/panel 驱动加载顺序、sepolicy 未完整加载）。
   系统内无 root、`pstore` 与块设备均不可读，**无法从系统侧取证**，只能真机实测。
 
+### 9.7 修正：上次黑屏是从 `boot_a` 启动的，**不是** recovery 分区
+
+机主确认：`recovery_a` **仍是原厂镜像**。因此 9.2 那次「进入 recovery 模式（USB `D001`）」，
+**用的是 `boot_a` 里的 OF 镜像**（recovery 分区完全没参与）。
+
+推论（进一步收紧）：
+
+1. ABL 在 recovery 模式下**会加载 boot 分区的 ramdisk** —— 我们把 OF 镜像放进 boot 后，
+   它被正确加载并执行到了 `adbd` 起来（`adb get-state=recovery`）；
+2. 这条路**与 recovery 分区白名单无关**，所以「塞 boot」确实是有效的绕过手段；
+3. 黑屏只可能是 **OF recovery 自身**问题（显示初始化 / 第二阶段 init / sepolicy），
+   不是「ABL 不认这个镜像」。
+
+本地指纹对照（用于将来确认设备上 recovery 分区到底是哪版）：
+
+| 文件 | 大小 | sha256 前 20 |
+|---|---|---|
+| `cmp\stock-recovery.img`（= ZUI16 原厂） | 100663296 | `EA89E4C32E490B5EACD6` |
+| ZUI16 包 `image\recovery.img` | 100663296 | `EA89E4C32E490B5EACD6`（同 ZUI16 上表一致） |
+| ZUI15 包 `images\recovery.img` | 104857600 | `D3646E0F3154E249A73D` |
+| `cmp\of-stocktpl.img` | 100663296 | `0D9D5FFE23F2F7D6157E` |
+| `OrangeFox-stockhdr.img` | 104857600 | `81FBAB23FB721A15D84E` |
+| `OrangeFox-new.img` | 104857600 | `30EF74EB1D19BD1C61DE` |
+
 ### 9.5 提醒：900E 状态
 刷回原厂 boot 后重启，设备一度停在 **`Qualcomm HS-USB Diagnostics 900E`（USB `VID_05C6&PID_900E`，COM6）**：
 此状态下 `adb` / `fastboot` 都不可用，需要用按键（长按电源强制断电后按音量键）重新进 fastboot 或 9008。
