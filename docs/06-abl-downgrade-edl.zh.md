@@ -301,10 +301,29 @@ ro.boot.verifiedbootstate = orange
 - 用 `-Vbmeta flags3`（禁校验）再试，减少 recovery 受到的约束；
 - 把 **原厂 boot ramdisk 与 OF ramdisk 合并**成同一镜像：正常情况下能启动系统、进 recovery 时跑 OF ——
   这样失败也不用救机（当前失败会导致系统也起不来，必须手动回 fastboot 刷回）；
+  ⚠️ **2026-10-03 复核：此方案前提不成立**，见 9.6——原厂 boot 分区没有 ramdisk 可合并；
 - 查黑屏根因方向：fb/panel 驱动初始化、recovery 的 `init.recovery.*.rc` 是否执行到、sepolicy 是否加载完整。
 
-### 9.5 提醒：900E 状态
+### 9.6 关键结构事实（本轮新查明，纠正了此前的误解）
 
+| 分区 | 实际内容 | 依据 |
+|---|---|---|
+| `boot_a` | **只有 头(4096) + 内核(46819840) + AVB 块(896)**，**没有 ramdisk** | AVB footer：`original_image_size=46841856`、`vbmeta_offset=46841856` |
+| `vendor_boot_a` | **正常启动用的 ramdisk 在这里**：`VNDRBOOT` v4 头，`vendor_ramdisk_size=11553237`（11.0 MB，legacy LZ4） | 直接解析 `ZUI15-extract\images\vendor_boot.img` |
+| `recovery_a` | 出厂 recovery 镜像（100MB 分区，`recovery.img` 由原厂 96MB 模板 + kernel=0） | 原厂 rawprogram |
+
+`vendor_boot` 的 cmdline：`video=vfb:640x400,bpp=32,memsize=3072000 bootconfig`
+（ABL 会注入 `video=vfb`，即虚拟帧缓冲；**显示初始化相关**）。
+
+**由此解释**：
+- 正常启动 = 用 vendor_boot 的 ramdisk（我们没动它）→ 系统正常；
+- recovery 模式 = 用 **boot 分区**的 ramdisk → 我们放 OF 镜像后**成功进入 recovery 模式**（USB `D001`）；
+- 所以「把原厂 boot ramdisk 与 OF ramdisk 合并」这个方案**前提不成立**——原厂 boot 里没有 ramdisk 可合并。
+- 黑屏的原因**不在 ramdisk 是否被加载**（它被加载了，adbd 都起来了），而在 **OF recovery 自身的启动/显示初始化**
+  （可能方向：`init.recovery.*.rc` 是否执行到、`msm_drm.ko`/panel 驱动加载顺序、sepolicy 未完整加载）。
+  系统内无 root、`pstore` 与块设备均不可读，**无法从系统侧取证**，只能真机实测。
+
+### 9.5 提醒：900E 状态
 刷回原厂 boot 后重启，设备一度停在 **`Qualcomm HS-USB Diagnostics 900E`（USB `VID_05C6&PID_900E`，COM6）**：
 此状态下 `adb` / `fastboot` 都不可用，需要用按键（长按电源强制断电后按音量键）重新进 fastboot 或 9008。
 本次由机主手动操作后回到系统，**数据全程未受影响**。
