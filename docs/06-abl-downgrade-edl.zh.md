@@ -407,7 +407,134 @@ FBE（`/data` 挂载、`ls /data`、dmesg 里 fbe/fscrypt/keymaster）、MTP/USB
 
 ---
 
-## 十二、当前设备状态与结论汇总
+## 十二、日志可得性（2026-10-03 实查）
+
+问「有没有日志」——把所有来源查了一遍，结论如下。
+
+### 12.1 设备侧：基本取不到
+
+| 来源 | 结果 | 原因 |
+|---|---|---|
+| `/tmp/recovery.log` | **Permission denied** | 文件存在，但这个 recovery 拒绝非 root 的 adb 访问 |
+| `/cache/recovery/last_log` 等 | **Permission denied** | 同上 |
+| `adb logcat` | 无输出 | adbd 的 shell 崩溃（`Could not set SELinux context`） |
+| `dmesg` | 空 | Android 13 shell 受限 |
+| `/proc/last_kmsg` | 不存在 | 现代内核已废弃 |
+| `/sys/fs/pstore` | Permission denied | 需 root |
+| **`cache` 分区** | **分区表中不存在** | 查原厂 `rawprogram0.xml`：LUN0 只有 ssd/persist/misc/keystore/oemowninfo/lenovolock/lenovocust/lenovoraw/super/frp/vbmeta_system/metadata/userdata —— **无 cache、无 pstore** |
+| **`misc`（BCB）** | **6 个非零字节** | 见下 |
+
+→ Android recovery 的日志默认落在 `/cache/recovery/`，本机**没有 cache 分区**，
+所以日志只在内存里，**重启即失**。
+
+### 12.2 `misc` 分区实读（EDL dump，1MB）
+
+```
+非零字节数: 6    范围: 0x8000-0x8006
+内容: 02 b0 0a 74 56 00 01  → 一小段结构，无字符串
+BCB command / recovery / stage: 全为空
+```
+
+**BCB 为空 = ABL 在读走「启动到 recovery」这条命令后清空了它**（标准行为）。
+因此 `misc` 里**没有留下「上次要求启动到哪」的历史记录**，也就无法用它反推
+「ABL 是选择了 recovery 分区还是 boot 分区」。
+
+### 12.3 本机（PC）侧：日志齐全
+
+| 文件 | 大小 | 内容 |
+|---|---|---|
+| `E:\rom\port\of_win.log` | 64 KB | **成功的 CI 构建日志**（TWRP manifest、`lunch omni_TB331FC-eng`、`mka recoveryimage`、发 Release） |
+| `E:\rom\port\of_check.log` | 2.5 MB | 全量编译日志（22k 目标） |
+| `E:\rom\port\of_fail.log` | 1.4 MB | 失败的构建尝试 |
+| `of2/of3/of4/of5/of6/of_s.log` | 24–64 KB | 历次 CI 运行 |
+| `ZUI15-extract\images\port_trace.txt` | 18 KB | **9008 fh_loader 那次 LUN4 失败的完整 trace** |
+| `TB331FC-abl-downgrade\logs\*` | — | 本轮 EDL 读/写的 trace |
+
+**独立证据（重要）**：`of_win.log` 里 CI 用官方 `unpack_bootimg.py` 解包内核镜像时输出
+
+```
+boot magic: ANDROID!
+kernel_size: 43092480
+ramdisk size: 0            ← 官方工具同样报「无 ramdisk」
+boot image header version: 4
+boot image signature size: 0
+```
+
+与我们从 AVB footer 算出的 `original_image_size = 4096 + 内核 + 896` **互相印证**：
+**原厂 boot 分区没有 ramdisk**（正常启动的 ramdisk 在 `vendor_boot`）。
+
+### 12.4 结论：想拿到 ABL/recovery 日志，必须先有
+
+1. **一个 shell 可用的 recovery**（本机原厂 recovery 的 adbd 不提供 root shell），或
+2. **root**（可读 `/sys/fs/pstore`、`/tmp/recovery.log`），或
+3. **UART 串口**（ABL 的调试输出通常在串口上，本机无串口硬件）
+
+当前三条都不具备，所以「黑屏那几次到底发生了什么」**没有日志可查**，只能靠屏幕现象判断。
+
+---
+
+## 十四、2026-10-03 boot / abl 双实验实测（本轮新增，含证伪）
+
+### 14.1 abl 读回：设备原本是 ZUI16
+
+用 EDL `<read>` 读回（注意：**`--sendimage` 是"发送"不是"读回"**，读回必须用 `<read>` XML）：
+
+```
+abl_a (设备)  sha256 22eaf506d8c80e5c287a  → vs ZUI16 差 0 字节 ✔ / vs ZUI15 差 239155
+abl_b (设备)  sha256 22eaf506d8c80e5c287a  → 同上
+```
+
+→ **历史上那次 `fh_loader` 失败后，abl 降级从未真正发生过**（这台一直是 ZUI16 abl）。
+
+### 14.2 首次真正写入 ZUI15 abl（成功）
+
+`write_abl_edl.ps1`（新增脚本，含 Sahara + `--memoryname=ufs`）写入成功，
+重新读回确认两槽均为 **`349b5b4036fde7f1cedc…` = ZUI15**。
+
+### 14.3 结果：**假设被证伪**
+
+| 测试 | 结果 |
+|---|---|
+| ZUI15 abl + `fastboot flash recovery_a OrangeFox-new.img` + `reboot recovery` | ❌ **仍回落 fastboot**（第三方 recovery 依旧进不去） |
+| ZUI15 abl + ZUI16 系统，正常启动 | ❌ **系统也起不来**（回路 fastboot） |
+
+→ **「换 ZUI15 abl 就能绕过 recovery 白名单」不成立**。白名单要么在 ZUI15 abl 里同样存在，
+要么根本不在 abl 里（xbl 或其它环节）。
+
+### 14.4 boot 分区：用「正确版镜像」重测，仍失败
+
+之前两次用的是我**重组过头部**的 `OrangeFox-boot.img`，本轮换成**与你原镜像头部一字不差**的版本：
+
+- `OrangeFox-bootA-96M.img` = `OrangeFox-new.img` 截断到 96MB（boot 分区大小），
+  头部 64 字节与原图**完全相同**（`kernel_addr=0x16c16ea`、`ramdisk_size=0xC600063C` 都不动）
+- 已校验 **ramdisk 完整**（LZ4 链第 7 块结束于 `0x43696ea`，早于截断点）
+- 配套 vbmeta：`avb\vbmeta_bootA96_flags0.img`（boot 描述符 = 该镜像哈希 + OF 原图 salt `293f76c0…`）
+- 刷 `vbmeta_a` + `boot_a` → OKAY → `reboot recovery` → **屏幕仍是原厂 recovery 菜单**
+
+→ **recovery 模式下被执行的确实是 recovery 分区**，塞进 boot 的镜像未被采用。
+（这次排除了「镜像头部被改坏」这个变量，所以结论比之前更硬。）
+
+### 14.5 回滚（全部已验证）
+
+| 分区 | 恢复为 | 验证 |
+|---|---|---|
+| `abl_a` / `abl_b` | ZUI16 | EDL 读回 sha256 `22eaf506…`，与 ZUI16 差 0 字节 ✔ |
+| `recovery_a` | 原厂 `cmp\stock-recovery.img` | 刷入 OKAY |
+| `boot_a` | 原厂 `cmp\stock-boot.img` | 刷入 OKAY |
+| `vbmeta_a` | 原厂 `avb\vbmeta_stock_backup.img` | 刷入 OKAY |
+
+### 14.6 EDL 操作两个坑（本轮踩到）
+
+1. **`fh_loader --sendimage` 是「发送本地文件到设备」，不是读回**。
+   读回必须写 `<read SECTOR_SIZE_IN_BYTES=... physical_partition_number=... start_sector=... num_partition_sectors=... filename=.../>`
+   的 XML，用 `--sendxml` + `--mainoutputdir=<输出目录>`。
+2. **每次重新进入 9008 都必须重新送 firehose**，否则 fh_loader 收到的是二进制垃圾
+   （`04 00 00 00 10 00 00 00 …`），报 `XML not formed correctly`。
+   若协议失步，`QSaharaServer ... -k`（sendclearstate）可以复位状态机，之后即可正常读。
+
+---
+
+## 十五、当前设备状态与结论汇总
 
 - 设备：`HA1YPQJB`，ZUI `16.0.544`（`TB331FC_CN_OPEN_USER_Q00003.0_U_ZUI_16.0.544_ST_241115`），
   槽位 `_a`，`verifiedbootstate=orange`，系统正常、数据完好；
